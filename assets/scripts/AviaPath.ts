@@ -7,7 +7,7 @@
  * 兩條原則：
  *   1. 結果先決 —— 先有結果,再造一條「演起來剛好等於這個結果」的路徑。
  *   2. 航線是編排出來的,不是模擬出來的 —— 沒有重力、沒有速度積分。
- *      關鍵影格 + Catmull-Rom 取樣,曲線形狀完全由參數控制,不會出現物理跑飛。
+ *      每段是一條解析式的彈道拋物線,形狀完全由參數控制,不會出現物理跑飛。
  *
  * 所有可調參數都集中在下面幾個 configure* 函式,由 AviaGame 的 Inspector 餵進來。
  */
@@ -132,10 +132,16 @@ export const PHYS = {
     //   2. 只有吃到 +N / ×N 才會上升,一律抬高 STEP_UP（與數字大小、當前高度無關）
     //   3. 只有吃到火箭才會有額外下降表演,一律壓低 STEP_DOWN
     //   → 每個物件的淨變化 = ±STEP − GLIDE_DROP,全局一致
-    STEP_UP: 55,            // 46 × 1.2
-    STEP_DOWN: 55,          // 46 × 1.2
-    GLIDE_DROP: 22,         // 每個段落拋物線下降多少 px
-    RISE_TICKS: 4,          // 升／降表演持續幾 tick（其餘時間都在拋物線下降）
+    STEP_UP: 82,            // 吃到 +N / ×N 時,弧線頂點比命中點高多少（55 × 1.5）
+    STEP_DOWN: 82,          // 吃到飛彈時往下砸多少（55 × 1.5）
+    GLIDE_DROP: 30,         // 每段拋物線從頂點再往下掉多少（決定弧線後半的落差）
+    /**
+     * 弧線頂點位置偏移。1 = 幾何上正確的彈道頂點（由 STEP_UP 與 GLIDE_DROP 的比例算出）,
+     * 調小 → 頂點提前、上升更急促;調大 → 頂點延後、爬升更悠長。
+     */
+    ARC_APEX_BIAS: 1,
+    ROCKET_DIVE_FRAC: 0.45, // 飛彈命中後,前 45% 的段落用來俯衝,其餘滑降
+    LAST_ARC_TICKS: 7,      // 最後一個物件的升／降表演長度（之後就交給收尾段）
     TAKEOFF_STEPS: 2,       // 第一個物件放在甲板上方幾階
     MIN_ALT: 130,           // 航線最低只能降到這裡（= 甲板高度）
 
@@ -384,8 +390,57 @@ interface FlightPlan {
     riseWindows: { from: number; to: number }[];   // 允許上升的區間（起飛 + 命中表演）
 }
 
-const easeOut = (s: number) => 1 - (1 - s) * (1 - s);   // 減速抵達（爬升用）
-const easeIn = (s: number) => s * s;                    // 加速離開（被打下去用）
+const easeOutCubic = (s: number) => 1 - Math.pow(1 - s, 3);
+
+/**
+ * 一段完整的彈道拋物線。
+ *
+ *   y(s) = apex − k·(s − p)²
+ *
+ * 頂點高度固定是 y0 + rise,段尾固定落在 y0 + rise − fall。
+ * 頂點位置 p 由 rise 與 fall 的比例解出來：
+ *
+ *   k·p²     = rise      （從起點爬到頂點）
+ *   k·(1−p)² = fall      （從頂點掉到段尾）
+ *   ⇒ (1−p)/p = √(fall/rise)  ⇒  p = 1/(1 + √(fall/rise))
+ *
+ * 所以弧線兩側的曲率自動一致 —— 這就是「看起來像真的被拋出去」的關鍵。
+ * 上一版是「4 tick 快速彈起 + 另一條拋物線」,接縫處有個平頂,弧度不連續。
+ */
+function arcSegment(y0: number, rise: number, fall: number, n: number, out: number[]) {
+    const apex = y0 + rise;
+    if (rise <= 0.01) {                       // 沒有上升 → 退化成單純的拋物線下降
+        for (let t = 1; t <= n; t++) { const s = t / n; out.push(y0 - fall * s * s); }
+        return apex;
+    }
+    const r = Math.sqrt(Math.max(0, fall) / rise);
+    const p = clamp01(1 / (1 + r) * PHYS.ARC_APEX_BIAS, 0.12, 0.88);
+    const k = rise / (p * p);
+    for (let t = 1; t <= n; t++) {
+        const s = t / n;
+        out.push(apex - k * (s - p) * (s - p));
+    }
+    // p 被 clamp（或 ARC_APEX_BIAS ≠ 1）時終點會有微小誤差 → 直接釘死,
+    // 保證「每個物件的淨變化 = STEP_UP − GLIDE_DROP」這條契約不會鬆掉
+    out[out.length - 1] = apex - fall;
+    return p;
+}
+
+/**
+ * 飛彈段落：單調下降,不可能有上升。
+ * 前段快速俯衝（撞擊感）,後段接回拋物線滑降,兩者相加仍然單調。
+ */
+function diveSegment(y0: number, total: number, n: number, out: number[]) {
+    const f = PHYS.ROCKET_DIVE_FRAC;
+    for (let t = 1; t <= n; t++) {
+        const s = t / n;
+        const hit = easeOutCubic(Math.min(1, s / f));   // 撞擊：快進慢出
+        const glide = s * s;                            // 滑降：拋物線
+        out.push(y0 - total * (0.7 * hit + 0.3 * glide));
+    }
+}
+
+function clamp01(v: number, lo: number, hi: number) { return Math.max(lo, Math.min(hi, v)); }
 
 /** 高度上限。MAX_ALT = 0 表示不封頂（天空無限）。 */
 function clampAlt(a: number): number {
@@ -401,7 +456,7 @@ function clampAlt(a: number): number {
  */
 function minimumRouteTicks(ops: ObjKind[], landed: boolean): number {
     const end = landed ? PHYS.LAND_TICKS_MAX : PHYS.SPLASH_TICKS_MAX;
-    return PHYS.MIN_GAP * (ops.length + 1) + PHYS.RISE_TICKS + end + 4;
+    return PHYS.MIN_GAP * (ops.length + 1) + PHYS.LAST_ARC_TICKS + end + 4;
 }
 
 /** 走完一整條航線,逐 tick 產出高度。回傳的最後一個 tick 就是終點。 */
@@ -411,21 +466,13 @@ function buildRoute(ops: ObjKind[], landed: boolean, rng: Rng, st: Style, gapSca
     const riseWindows: { from: number; to: number }[] = [];
     const G = (n: number) => Math.max(PHYS.MIN_GAP, Math.min(PHYS.MAX_GAP, Math.round(n)));
 
-    // ── 起飛：從航母甲板爬升,到頂點後開始拋物線下降,剛好落在第一個物件上 ──
+    // ── 起飛：從航母甲板拋出去,弧線頂點過後開始下降,剛好落在第一個物件上 ──
     const firstY = clampAlt(PHYS.MIN_ALT + PHYS.TAKEOFF_STEPS * PHYS.STEP_UP);
     const tk0 = Math.max(PHYS.MIN_GAP, Math.round(PHYS.TAKEOFF_TICKS * st.gap * gapScale));
-    const climbT = Math.max(2, Math.round(tk0 * 0.6));
-    const fallT = Math.max(1, tk0 - climbT);
-    const apex = firstY + PHYS.GLIDE_DROP;
-
-    riseWindows.push({ from: 0, to: climbT });
-    for (let t = 0; t < climbT; t++) {
-        ys.push(PHYS.DECK_Y + (apex - PHYS.DECK_Y) * easeOut(t / climbT));
-    }
-    for (let t = 1; t <= fallT; t++) {
-        const s = t / fallT;
-        ys.push(apex - PHYS.GLIDE_DROP * s * s);
-    }
+    ys.push(PHYS.DECK_Y);
+    const p0 = arcSegment(PHYS.DECK_Y, firstY + PHYS.GLIDE_DROP - PHYS.DECK_Y,
+        PHYS.GLIDE_DROP, tk0, ys);
+    riseWindows.push({ from: 0, to: Math.ceil(p0 * tk0) + 1 });
     // 此時 ys.length === tk0 + 1,下一個索引就是第一個物件的 tick
 
     let cur = firstY;
@@ -436,33 +483,39 @@ function buildRoute(ops: ObjKind[], landed: boolean, rng: Rng, st: Style, gapSca
         hits.push({ tick, y: cur });
 
         const isLast = i === ops.length - 1;
-        const delta = stepFor(ops[i]);
-        const peak = clampAlt(cur + delta);
-
-        // 段落總長
         const jit = 1 + rng.range(-PHYS.GAP_JITTER, PHYS.GAP_JITTER);
         const segLen = isLast ? 0 : G(PHYS.BASE_GAP * st.gap * gapScale * jit);
 
-        // ① 升／降表演
-        const riseT = isLast
-            ? PHYS.RISE_TICKS
-            : Math.max(1, Math.min(PHYS.RISE_TICKS, segLen - 2));
-        if (delta > 0) riseWindows.push({ from: tick, to: tick + riseT });
-        for (let t = 1; t <= riseT; t++) {
-            const s = t / riseT;
-            ys.push(cur + (peak - cur) * (delta > 0 ? easeOut(s) : easeIn(s)));
-        }
+        // 最後一個物件後面接的是收尾段,只演完升／降本身就交棒
+        const tailLen = Math.max(3, Math.round(PHYS.LAST_ARC_TICKS * st.gap * gapScale));
 
-        if (isLast) { cur = peak; break; }
-
-        // ② 拋物線下降到下一個物件
-        const glideT = Math.max(1, segLen - 1 - riseT);
-        const drop = Math.min(PHYS.GLIDE_DROP, Math.max(0, peak - PHYS.MIN_ALT));
-        for (let t = 1; t <= glideT; t++) {
-            const s = t / glideT;
-            ys.push(peak - drop * s * s);
+        if (ops[i].kind === 'ROCKET') {
+            // 飛彈：單調俯衝,不可能有上升
+            const bottom = Math.max(PHYS.MIN_ALT, cur - PHYS.STEP_DOWN);
+            if (isLast) {
+                diveSegment(cur, cur - bottom, tailLen, ys);
+                cur = ys[ys.length - 1];
+                break;
+            }
+            const endY = Math.max(PHYS.MIN_ALT, bottom - PHYS.GLIDE_DROP);
+            diveSegment(cur, cur - endY, segLen, ys);
+            cur = ys[ys.length - 1];
+        } else {
+            // 加值／乘算：一整段完整的彈道弧線,頂點 = 命中點 + STEP_UP
+            const apexY = clampAlt(cur + PHYS.STEP_UP);
+            const rise = apexY - cur;
+            if (isLast) {
+                // 只演上升的那一半,頂點交給收尾段接著往下帶
+                arcSegment(cur, rise, 0, tailLen, ys);
+                riseWindows.push({ from: tick, to: tick + tailLen + 1 });
+                cur = ys[ys.length - 1];
+                break;
+            }
+            const fall = Math.min(PHYS.GLIDE_DROP, Math.max(0, apexY - PHYS.MIN_ALT));
+            const p = arcSegment(cur, rise, fall, segLen, ys);
+            riseWindows.push({ from: tick, to: tick + Math.ceil(p * segLen) + 1 });
+            cur = ys[ys.length - 1];
         }
-        cur = peak - drop;
     }
 
     // ── 收尾：降落在目的艦甲板,或墜入海中 ──

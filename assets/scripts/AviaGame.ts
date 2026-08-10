@@ -87,17 +87,23 @@ export class AviaGame extends Component {
     ];
 
     // ════════════════ ④ 航線編排（沒有物理,全部是編排參數）════════════════
-    @property({ type: CCFloat, group: G_PATH, tooltip: '【只有吃到才上升】吃到任何 +N 或 ×N,航線一律抬高這麼多 px。與數字大小、當前高度都無關' })
-    stepUp = 55;
+    @property({ type: CCFloat, group: G_PATH, tooltip: '【只有吃到才上升】吃到任何 +N 或 ×N,弧線頂點比命中點高這麼多 px。與數字大小、當前高度都無關' })
+    stepUp = 82;
 
-    @property({ type: CCFloat, group: G_PATH, tooltip: '【只有飛彈才有下降表演】吃到飛彈一律壓低這麼多 px' })
-    stepDown = 55;
+    @property({ type: CCFloat, group: G_PATH, tooltip: '【只有飛彈才有下降表演】吃到飛彈一律往下砸這麼多 px' })
+    stepDown = 82;
 
-    @property({ type: CCFloat, group: G_PATH, tooltip: '【平飛 = 拋物線下降】每個段落固定往下掉這麼多 px。每個物件的淨變化 = ±階距 − 這個值' })
-    glideDrop = 22;
+    @property({ type: CCFloat, group: G_PATH, tooltip: '【弧線後半】每段從頂點再往下掉這麼多 px。每個物件的淨變化 = ±階距 − 這個值' })
+    glideDrop = 30;
 
-    @property({ type: CCInteger, group: G_PATH, tooltip: '升／降表演持續幾 tick。其餘時間航線一律在拋物線下降' })
-    riseTicks = 4;
+    @property({ slide: true, range: [0.4, 1.6, 0.01], group: G_PATH, tooltip: '弧線頂點位置偏移。1 = 幾何上正確的彈道頂點。調小 → 頂點提前、上升急促;調大 → 頂點延後、爬升悠長' })
+    arcApexBias = 1;
+
+    @property({ slide: true, range: [0.15, 0.9, 0.01], group: G_PATH, tooltip: '飛彈命中後,前幾成的段落用來俯衝,其餘滑降。調小 → 撞擊更猛' })
+    rocketDiveFrac = 0.45;
+
+    @property({ type: CCInteger, group: G_PATH, tooltip: '最後一個物件的升／降表演長度（tick）,之後交給收尾段' })
+    lastArcTicks = 7;
 
     @property({ type: CCInteger, group: G_PATH, tooltip: '第一個物件放在甲板上方幾階' })
     takeoffSteps = 2;
@@ -300,7 +306,9 @@ export class AviaGame extends Component {
             STEP_UP: this.stepUp,
             STEP_DOWN: this.stepDown,
             GLIDE_DROP: this.glideDrop,
-            RISE_TICKS: this.riseTicks,
+            ARC_APEX_BIAS: this.arcApexBias,
+            ROCKET_DIVE_FRAC: this.rocketDiveFrac,
+            LAST_ARC_TICKS: this.lastArcTicks,
             TAKEOFF_STEPS: this.takeoffSteps,
             MIN_ALT: this.minAlt,
             MAX_ALT: this.maxAlt,

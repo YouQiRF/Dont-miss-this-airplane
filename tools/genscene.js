@@ -101,7 +101,8 @@ const gameProps = {
     10, 12, 15, 20, 25, 40, 60, 80, 120, 250],
 
   // ④ 航線編排
-  stepUp: 55, stepDown: 55, glideDrop: 22, riseTicks: 4,
+  stepUp: 82, stepDown: 82, glideDrop: 30,
+  arcApexBias: 1, rocketDiveFrac: 0.45, lastArcTicks: 7,
   takeoffSteps: 2, minAlt: 130, maxAlt: 0, decoyMinY: 24,
   baseGap: 9, gapJitter: 0.35, minGap: 6, maxGap: 22, takeoffTicks: 10,
   pxPerTick: 40, pitchRun: 34, pitchMaxDeg: 42,
