@@ -91,6 +91,28 @@ avia-cocos/
 
 ## 版本歷程
 
+### v0.4 — 2026-08-10 · 離線／正式雙版本、觸艦滑行結局、單檔離線版
+
+| 改動 | 理由 |
+|---|---|
+| `AviaGame` 加 `offlineMode` / `serverUrl` / `requestTimeout` | 「離線與正式版做進遊戲中」。兩個版本唯一的差別就是 `fetchResult()` 從哪拿結果,其餘全部共用。連線失敗會**退款**,不會偷偷用本地結果頂替 |
+| 新結局 `SLIDE_OFF`：該墜海的位置剛好有航母 → 觸艦、滑行、從甲板尾端翻落 | 「要是在原本該落海的時候停在航母上,那要滑行然後落入海中」。實測 30.5% 的落海局會走這條 |
+| 海面航母佈局搬進 `AviaPath`（`SEA` / `seaCarrierX` / `carrierDeckAt`） | 上面那條規則要成立,演算法必須知道船在哪。渲染層改用同一份函式,兩邊位置保證一致 |
+| 新增 `AviaOffline.html` 單檔離線版 + `tools/genoffline.js` | 「build 可以直接離線執行的版本」。雙擊就玩,不用伺服器/Cocos/網路 |
+| 新增 `tools/serve.js`（零相依靜態伺服器） | Cocos 的 web build 用 ES module + fetch,`file://` 會被 CORS 擋,一定要走 HTTP |
+
+**單檔離線版的關鍵設計**：演算法不是複製一份,而是由 `tools/genoffline.js` 從
+`assets/scripts/AviaPath.ts` **原檔**用 `node:module` 的 `stripTypeScriptTypes()` 剝掉型別後注入。
+所以航線邏輯永遠只有一份,改完 `AviaPath.ts` 重跑產生器就同步了 —— 不會出現
+「Cocos 版和離線版行為不一樣」。只有渲染層（`tools/offline/renderer.js`,Canvas2D）是另寫的。
+
+**實機驗證**（這是第一次真的看到畫面跑）：用瀏覽器開起來截圖確認,
+航母平台、飛機、物件、飛彈右→左、HUD 實際距離/高度、鏡頭跟隨、彈道弧線全部正常,零 console 錯誤。
+過程抓到一個 Canvas2D 版專有的 bug：尾煙存螢幕座標又每 frame 手動位移,誤差累積成一條斜線。
+改存世界座標後正常（Cocos 版沒這問題,它的軌跡本來就在 world 節點底下）。
+
+---
+
 ### v0.3 — 2026-08-10 · 飛行規則定案（拋物線下降 + 只在命中時上升）
 
 | 改動 | 理由 |

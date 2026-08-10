@@ -41,7 +41,15 @@ export interface Frame { tick: number; y: number; vy: number; pitch: number; }
 
 export type BeatType =
     | 'TAKEOFF' | 'HIT_PICKUP' | 'HIT_BOOST' | 'HIT_ROCKET'
-    | 'NEAR_MISS' | 'ENDGAME_REVEAL' | 'LAND' | 'SPLASH';
+    | 'NEAR_MISS' | 'ENDGAME_REVEAL' | 'LAND' | 'SPLASH' | 'DECK_SLIDE';
+
+/**
+ * 結束方式：
+ *   LAND       降落在目的艦 → 結算
+ *   SPLASH     直接墜海 → 歸零
+ *   SLIDE_OFF  該墜海的位置剛好有一艘航母 → 觸艦、滑行、從甲板尾端翻落海中 → 一樣歸零
+ */
+export type EndingKind = 'LAND' | 'SPLASH' | 'SLIDE_OFF';
 
 export interface Beat {
     tick: number;
@@ -68,6 +76,9 @@ export interface PerformanceScript {
     finalBalance: number;   // 實際派彩倍數（落海 = 0）
     peakBalance: number;    // 畫面上曾出現的最高值
     peakAltitude: number;   // 本局最高點（給鏡頭/背景做高空效果用）
+    ending: EndingKind;
+    /** SLIDE_OFF 時：觸艦的那一 tick（渲染層用來播火花／煞車煙）。其餘為 -1 */
+    slideFrom: number;
     /** 允許上升的區間（起飛爬升 + 命中 +N/×N 的表演）。其餘時間航線一律下降。 */
     riseWindows: { from: number; to: number }[];
     exact: boolean;         // false = 符號組合湊不出目標倍數,已退回近似值
@@ -176,6 +187,44 @@ export const PHYS = {
 };
 
 export function configurePhys(p: Partial<typeof PHYS>) { Object.assign(PHYS, p); }
+
+/**
+ * 海面上的航母佈局。
+ *
+ * 位置是確定性的 —— 演算法與渲染共用這幾個函式,所以兩邊看到的船一定在同一個地方。
+ * 這很重要：「該落海卻剛好停在航母上」這條規則要成立,演算法必須知道船在哪。
+ */
+export const SEA = {
+    SPACING: 1500,   // 船距（px）。0 = 海面上沒有佈景船
+    HALF_W: 152,     // 甲板半寬
+    JITTER: 0.25,    // 位置抖動比例
+};
+
+export function configureSea(p: Partial<typeof SEA>) { Object.assign(SEA, p); }
+
+/** 由整數種子產生穩定的 0..1 */
+export function hash01(n: number) {
+    let h = Math.imul(n ^ 0x9e3779b9, 2246822507);
+    h = Math.imul(h ^ (h >>> 13), 3266489909);
+    return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+
+/** 第 i 艘佈景船的中心 x */
+export function seaCarrierX(i: number): number {
+    return i * SEA.SPACING + (hash01(i * 2654435761) - 0.5) * SEA.SPACING * SEA.JITTER;
+}
+
+/** 這個 x 底下有沒有甲板？有就回傳船的中心 x,沒有回 null。起飛艦（x≈0）不算。 */
+export function carrierDeckAt(x: number): number | null {
+    if (SEA.SPACING <= 0) return null;
+    const i = Math.round(x / SEA.SPACING);
+    for (let k = i - 1; k <= i + 1; k++) {
+        const cx = seaCarrierX(k);
+        if (Math.abs(cx) < SEA.HALF_W * 2) continue;     // 起飛艦的位置不放佈景船
+        if (Math.abs(x - cx) <= SEA.HALF_W) return cx;
+    }
+    return null;
+}
 
 export const STYLE_RANGE = {
     gapMin: 0.85, gapMax: 1.20,     // 間距縮放（唯一的每局隨機項,升降幅度永遠固定）
@@ -388,6 +437,8 @@ interface FlightPlan {
     carrierTick: number;
     peakAltitude: number;
     riseWindows: { from: number; to: number }[];   // 允許上升的區間（起飛 + 命中表演）
+    ending: EndingKind;
+    slideFrom: number;
 }
 
 const easeOutCubic = (s: number) => 1 - Math.pow(1 - s, 3);
@@ -441,6 +492,7 @@ function diveSegment(y0: number, total: number, n: number, out: number[]) {
 }
 
 function clamp01(v: number, lo: number, hi: number) { return Math.max(lo, Math.min(hi, v)); }
+function clampInt(v: number, lo: number, hi: number) { return Math.max(lo, Math.min(hi, Math.round(v))); }
 
 /** 高度上限。MAX_ALT = 0 表示不封頂（天空無限）。 */
 function clampAlt(a: number): number {
@@ -518,22 +570,67 @@ function buildRoute(ops: ObjKind[], landed: boolean, rng: Rng, st: Style, gapSca
         }
     }
 
-    // ── 收尾：降落在目的艦甲板,或墜入海中 ──
-    const endY = landed ? PHYS.DECK_Y : PHYS.WATER_Y;
-    const rate = landed ? PHYS.LAND_RATE : PHYS.SPLASH_RATE;
-    const tMin = landed ? PHYS.LAND_TICKS_MIN : PHYS.SPLASH_TICKS_MIN;
-    const tMax = landed ? PHYS.LAND_TICKS_MAX : PHYS.SPLASH_TICKS_MAX;
-    const fall = Math.max(0, cur - endY);
-    const endT = Math.max(tMin, Math.min(tMax, Math.round(fall / Math.max(1, rate))));
+    // ── 收尾 ──
+    let ending: EndingKind = landed ? 'LAND' : 'SPLASH';
+    let slideFrom = -1;
 
-    for (let t = 1; t <= endT; t++) {
-        const s = t / endT;
-        // 降落：由緩到急再拉平（smoothstep）。墜海：拋物線加速砸下去。
-        const k = landed ? s * s * (3 - 2 * s) : s * s;
-        ys.push(cur - fall * k);
+    if (landed) {
+        const fall = Math.max(0, cur - PHYS.DECK_Y);
+        const endT = clampInt(fall / Math.max(1, PHYS.LAND_RATE), PHYS.LAND_TICKS_MIN, PHYS.LAND_TICKS_MAX);
+        for (let t = 1; t <= endT; t++) {
+            const s = t / endT;
+            ys.push(cur - fall * (s * s * (3 - 2 * s)));   // 由緩到急再拉平
+        }
+    } else {
+        // 墜海：逐 tick 往下掉。掉到甲板高度時如果底下剛好有一艘航母,
+        // 就改成「觸艦 → 滑行 → 從甲板尾端翻落海中」。
+        const base = ys.length - 1;
+        const fall = Math.max(0, cur - PHYS.WATER_Y);
+        const endT = clampInt(fall / Math.max(1, PHYS.SPLASH_RATE),
+            PHYS.SPLASH_TICKS_MIN, PHYS.SPLASH_TICKS_MAX);
+
+        let hitDeckAt = -1, deckCx = 0;
+        for (let t = 1; t <= endT; t++) {
+            const s = t / endT;
+            const y = cur - fall * s * s;                  // 拋物線加速砸下去
+            const tick = base + t;
+            if (y <= PHYS.DECK_Y) {
+                const cx = carrierDeckAt(tick * PHYS.PX_PER_TICK);
+                if (cx !== null) { hitDeckAt = tick; deckCx = cx; break; }
+            }
+            ys.push(y);
+        }
+
+        if (hitDeckAt >= 0) {
+            ending = 'SLIDE_OFF';
+            slideFrom = ys.length;                          // 觸艦的那一 tick
+            ys.push(PHYS.DECK_Y);
+
+            // 滑行到甲板尾端
+            const farEdge = deckCx + SEA.HALF_W;
+            const slideT = Math.max(3,
+                Math.ceil((farEdge - hitDeckAt * PHYS.PX_PER_TICK) / PHYS.PX_PER_TICK));
+            for (let k = 1; k <= slideT; k++) {
+                // 一點點彈跳,像真的在甲板上滑
+                ys.push(PHYS.DECK_Y + Math.max(0, 6 - k) * 1.2);
+            }
+            // 從甲板尾端翻落
+            const dropT = Math.max(5, Math.round(PHYS.DECK_Y / PHYS.SPLASH_RATE));
+            for (let k = 1; k <= dropT; k++) {
+                const s = k / dropT;
+                ys.push(PHYS.DECK_Y * (1 - s * s));
+            }
+        } else if (ys.length - 1 < base + endT) {
+            // 迴圈提前結束但沒碰到船（不該發生,保險）
+            for (let t = ys.length - base; t <= endT; t++) {
+                const s = t / endT;
+                ys.push(cur - fall * s * s);
+            }
+        }
+        ys[ys.length - 1] = PHYS.WATER_Y;                   // 終點釘死在水面
     }
 
-    return { ys, hits, riseWindows, terminalTick: ys.length - 1 };
+    return { ys, hits, riseWindows, terminalTick: ys.length - 1, ending, slideFrom };
 }
 
 function planFlight(ops: ObjKind[], landed: boolean, rng: Rng, st: Style): FlightPlan {
@@ -547,7 +644,7 @@ function planFlight(ops: ObjKind[], landed: boolean, rng: Rng, st: Style): Fligh
         R = buildRoute(ops, landed, rng, st, gapScale);
     }
 
-    const { ys, hits, riseWindows, terminalTick } = R;
+    const { ys, hits, riseWindows, terminalTick, ending, slideFrom } = R;
     const maxPitch = PHYS.PITCH_MAX_DEG * Math.PI / 180;
     const frames: Frame[] = [];
     let peak = 0;
@@ -560,11 +657,14 @@ function planFlight(ops: ObjKind[], landed: boolean, rng: Rng, st: Style): Fligh
     }
 
     // 航母位置：贏 = 降落點;輸 = 墜海點再往前一段（看得到、到不了）
+    const minGapPx = ending === 'SLIDE_OFF' ? SEA.HALF_W * 2 + 120 : 0;
+    const minGapTicks = Math.ceil(minGapPx / PHYS.PX_PER_TICK);
     const carrierTick = landed
         ? terminalTick
-        : terminalTick + (rng.chance(0.7) ? 6 + rng.int(11) : 24 + rng.int(28));
+        : terminalTick + Math.max(minGapTicks,
+            rng.chance(0.7) ? 6 + rng.int(11) : 24 + rng.int(28));
 
-    return { frames, hits, terminalTick, carrierTick, peakAltitude: peak, riseWindows };
+    return { frames, hits, terminalTick, carrierTick, peakAltitude: peak, riseWindows, ending, slideFrom };
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -678,6 +778,7 @@ export function buildPerformance(result: RoundResult): PerformanceScript {
         }
     }
     beats.push({ tick: Math.max(1, plan.carrierTick - 16), type: 'ENDGAME_REVEAL' });
+    if (plan.ending === 'SLIDE_OFF') beats.push({ tick: plan.slideFrom, type: 'DECK_SLIDE' });
     beats.push({ tick: plan.terminalTick, type: result.landed ? 'LAND' : 'SPLASH' });
     beats.sort((a, b) => a.tick - b.tick);
 
@@ -696,6 +797,8 @@ export function buildPerformance(result: RoundResult): PerformanceScript {
         peakBalance: balances.length ? Math.max(...balances) : 1,
         peakAltitude: plan.peakAltitude,
         riseWindows: plan.riseWindows,
+        ending: plan.ending,
+        slideFrom: plan.slideFrom,
         exact,
         style,
     };

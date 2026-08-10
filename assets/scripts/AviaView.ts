@@ -6,7 +6,7 @@
  */
 
 import { Node, Graphics, Label, UITransform, Color, Vec3, tween, Tween, Layers, UIOpacity } from 'cc';
-import { PHYS } from './AviaPath';
+import { PHYS, SEA, seaCarrierX } from './AviaPath';
 import type { Beat, Frame, ObjKind, PerformanceScript } from './AviaPath';
 
 export interface ViewConfig {
@@ -415,8 +415,7 @@ export class AviaView {
         g.clear();
         if (seaCarrierSpacing <= 0) return;
 
-        const CARRIER_W = 320;                       // 船體寬度,用來判斷會不會疊到
-        const startX = 0;
+        const CARRIER_W = SEA.HALF_W * 2;             // 用來判斷會不會疊到
         const endX = (this.script ? this.script.carrierTick : 30) * pxPerTick;
 
         const gap = seaCarrierSpacing;
@@ -424,11 +423,10 @@ export class AviaView {
         const i1 = Math.ceil((-scroll + W * 1.4) / gap) + 1;
 
         for (let i = i0; i <= i1; i++) {
-            const h = hash01(i * 2654435761);
-            const worldX = i * gap + (h - 0.5) * gap * 0.25;
-            // 避開兩艘主角艦
-            if (Math.abs(worldX - startX) < CARRIER_W) continue;
-            if (Math.abs(worldX - endX) < CARRIER_W) continue;
+            // 位置由 AviaPath 決定 —— 演算法靠它判斷「該墜海的位置有沒有船」,兩邊必須一致
+            const worldX = seaCarrierX(i);
+            if (Math.abs(worldX) < CARRIER_W) continue;          // 起飛艦
+            if (Math.abs(worldX - endX) < CARRIER_W) continue;   // 目的艦
 
             const x = worldX + scroll;
             if (x < -CARRIER_W || x > W + CARRIER_W) continue;
@@ -800,6 +798,16 @@ export class AviaView {
                 this.showBigText(tag, m >= 20 ? this.cfg.hudAccent : this.cfg.textColor);
                 break;
             }
+
+            case 'DECK_SLIDE':
+                // 該墜海卻剛好撞上一艘航母 —— 觸艦、擦出火花、開始滑行
+                this.pushFx('SMOKE', screenX, waterScreenY + PHYS.DECK_Y, 1.1, 14, 120,
+                    new Color(255, 255, 255, 210));
+                this.pushFx('SPRAY', screenX, waterScreenY + PHYS.DECK_Y, 0.5, 8, 90,
+                    new Color(255, 214, 120, 255));
+                this.shake = 0.9;
+                this.showBigText('停在艦上了…', this.cfg.textColor);
+                break;
 
             case 'SPLASH':
                 this.sinking = 1;

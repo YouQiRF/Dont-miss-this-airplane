@@ -73,8 +73,23 @@ export class AviaGame extends Component {
     @property({ type: CCInteger, group: G_SYM, tooltip: '期望用幾步加值湊完。調高 → 每步變小 → 場上物件變多' })
     pickupStepTarget = 8;
 
-    // ════════════════ ③ 離線結果 ════════════════
-    @property({ slide: true, range: [0, 1, 0.01], group: G_OFF, tooltip: '離線模式的降落成功率（純測試用）' })
+    // ════════════════ ③ 離線／正式 ════════════════
+    /**
+     * 離線版與正式版的唯一差別就在這裡：結果從哪裡來。
+     *   true  → 本地隨機（offlineResult），完全不連線
+     *   false → 向 serverUrl 要 { roundId, multiplier, landed }
+     * 其餘所有程式碼、演出、驗證完全共用。
+     */
+    @property({ group: G_OFF, tooltip: '打勾 = 離線版（結果本地隨機，不連線）；取消 = 正式版（向 serverUrl 要結果）' })
+    offlineMode = true;
+
+    @property({ type: CCString, group: G_OFF, tooltip: '正式版的開局 API。會 POST { bet } 並期待回傳 { roundId, multiplier, landed }' })
+    serverUrl = '';
+
+    @property({ type: CCFloat, group: G_OFF, tooltip: '正式版連線逾時（秒）。逾時或失敗會退款並顯示錯誤，不會偷偷用本地結果頂替' })
+    requestTimeout = 8;
+
+    @property({ slide: true, range: [0, 1, 0.01], group: G_OFF, tooltip: '【僅離線版】降落成功率' })
     winChance = 0.5;
 
     @property({ type: CCFloat, group: G_OFF, tooltip: '倍數偏移次方。越大越偏小倍數' })
@@ -457,20 +472,72 @@ export class AviaGame extends Component {
 
         this.pushConfig();                    // 執行期改 Inspector 也能即時生效
 
-        const result: P.RoundResult = this.forceResult
-            ? {
+        this.balance -= bet;
+        this.lastWin = 0;
+        this.state = 'PLAY';                 // 先鎖住 UI,避免連線期間重複按
+        this.lblInfo.string = this.offlineMode ? '' : '連線中…';
+        this.refreshUi();
+
+        this.fetchResult(bet).then(result => {
+            if (!result) {                   // 連線失敗 → 退款,不用本地結果頂替
+                this.balance += bet;
+                this.state = 'IDLE';
+                this.refreshUi();
+                return;
+            }
+            this.startRound(result);
+        });
+    }
+
+    /**
+     * 結果來源 —— 離線版與正式版唯一的差別。
+     * 其餘所有東西（演算法、演出、驗證）兩個版本完全共用。
+     */
+    private async fetchResult(bet: number): Promise<P.RoundResult | null> {
+        if (this.forceResult) {
+            return {
                 roundId: this.forceSeed || `force-${this.seq++}-${Math.random()}`,
                 multiplier: this.forceLanded ? this.forceMultiplier : 0,
                 landed: this.forceLanded,
+            };
+        }
+        if (this.offlineMode) {
+            const r = P.offlineResult();
+            if (this.forceSeed) r.roundId = this.forceSeed;
+            return r;
+        }
+        if (!this.serverUrl) {
+            this.lblInfo.string = '正式版模式但沒有設定 serverUrl';
+            return null;
+        }
+        try {
+            const ctrl = new AbortController();
+            const timer = setTimeout(() => ctrl.abort(), this.requestTimeout * 1000);
+            const res = await fetch(this.serverUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ bet }),
+                signal: ctrl.signal,
+            });
+            clearTimeout(timer);
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            const j = await res.json();
+            if (typeof j.multiplier !== 'number' || typeof j.landed !== 'boolean') {
+                throw new Error('回傳格式不對,需要 { roundId, multiplier, landed }');
             }
-            : (() => {
-                const r = P.offlineResult();
-                if (this.forceSeed) r.roundId = this.forceSeed;
-                return r;
-            })();
+            return {
+                roundId: String(j.roundId ?? Date.now()),
+                multiplier: j.multiplier,
+                landed: j.landed,
+            };
+        } catch (e) {
+            console.error('[Avia] 開局請求失敗', e);
+            this.lblInfo.string = '連線失敗,已退回下注';
+            return null;
+        }
+    }
 
-        this.balance -= bet;
-        this.lastWin = 0;
+    private startRound(result: P.RoundResult) {
         this.script = P.buildPerformance(result);
         this.t = 0;
         this.beatIdx = 0;
@@ -486,7 +553,9 @@ export class AviaGame extends Component {
                 : o.kind.kind === 'BOOST' ? `×${o.kind.value}` : `+${o.kind.value}`).join('  ');
             console.log(
                 `[Avia] ${s.roundId}\n` +
-                `  結果      ${s.landed ? '降落' : '落海'}  ${s.finalBalance}×  ${s.exact ? '' : '(近似)'}\n` +
+                `  模式      ${this.offlineMode ? '離線（本地隨機）' : '正式（' + this.serverUrl + '）'}\n` +
+                `  結果      ${s.landed ? '降落' : '落海'}  ${s.finalBalance}×  ` +
+                `結束方式 ${s.ending}  ${s.exact ? '' : '(近似)'}\n` +
                 `  序列      ${seq || '（無物件）'}\n` +
                 `  航程      ${s.terminalTick} tick / 航母在 ${s.carrierTick}（終點必定存在）\n` +
                 `  物件      命中 ${hits.length} / 誘餌 ${s.objects.length - hits.length}（誘餌保證碰不到）\n` +
@@ -499,16 +568,17 @@ export class AviaGame extends Component {
         if (!this.gfx) return;
         this.clock += dt;
 
-        if (this.state === 'IDLE') {
+        // state 已經是 PLAY 但 script 還沒回來 → 正式版正在等 server,先維持待機畫面
+        if (this.state === 'IDLE' || !this.script) {
             this.gfx.update(dt, 0, this.gfx.idleFrame(this.clock), false);
-            if (this.autoSpin) {
+            if (this.state === 'IDLE' && this.autoSpin) {
                 this.idleTimer += dt;
                 if (this.idleTimer >= this.autoSpinDelay) { this.idleTimer = 0; this.spin(); }
             }
             return;
         }
 
-        const s = this.script!;
+        const s = this.script;
         const ms = P.TICK_MS[this.speed];
 
         if (this.state === 'PLAY') {

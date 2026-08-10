@@ -7,7 +7,7 @@
  */
 
 // tools/ 不在 assets/ 內,Cocos 不會編譯它,所以可以用 .ts 副檔名讓 node 直接跑
-import { buildPerformance, evaluate, OFFLINE, PHYS } from '../assets/scripts/AviaPath.ts';
+import { buildPerformance, evaluate, OFFLINE, PHYS, carrierDeckAt } from '../assets/scripts/AviaPath.ts';
 import type { PerformanceScript, RoundResult } from '../assets/scripts/AviaPath.ts';
 
 // ══════════════ 1. 正確性掃描 ══════════════
@@ -118,11 +118,24 @@ for (const m of POOL) {
 // 落海局
 let splashFail = 0;
 const splashPos: number[] = [];
+const endKinds: Record<string, number> = { SPLASH: 0, SLIDE_OFF: 0 };
 for (let s = 0; s < 3000; s++) {
     const sc = buildPerformance({ roundId: `L-${s}`, multiplier: 0, landed: false });
+    endKinds[sc.ending] = (endKinds[sc.ending] ?? 0) + 1;
     if (sc.frames[sc.terminalTick].y > 0.001) { splashFail++; continue; }
     if (sc.carrierTick <= sc.terminalTick) splashFail++;
     if (decoyClearance(sc) <= PHYS.HIT_RADIUS) splashFail++;
+    // 觸艦滑行局：目的艦不可以跟被撞的那艘佈景船疊在一起
+    if (sc.ending === 'SLIDE_OFF') {
+        if (sc.slideFrom < 0 || sc.slideFrom >= sc.terminalTick) {
+            console.error(`✗ 落海 seed${s} SLIDE_OFF 但 slideFrom 不合理`); splashFail++;
+        }
+        const deckX = carrierDeckAt(sc.slideFrom * PHYS.PX_PER_TICK);
+        if (deckX === null) { console.error(`✗ 落海 seed${s} 觸艦點下面沒有船`); splashFail++; }
+        else if (Math.abs(sc.carrierTick * PHYS.PX_PER_TICK - deckX) < 300) {
+            console.error(`✗ 落海 seed${s} 目的艦跟被撞的船疊在一起`); splashFail++;
+        }
+    }
     splashPos.push(sc.terminalTick / sc.carrierTick);
 }
 
@@ -138,6 +151,8 @@ console.log(`誘餌最小淨空 ${worstClearance.toFixed(1)}px  (碰撞半徑 ${
 
 console.log('\n══════ 落海局 ══════');
 console.log(`樣本 3000   失敗 ${splashFail}`);
+console.log(`結束方式    直接墜海 ${endKinds.SPLASH}  /  觸艦滑行後翻落 ${endKinds.SLIDE_OFF}` +
+    `  (${(endKinds.SLIDE_OFF / 3000 * 100).toFixed(1)}%)`);
 const buckets = new Array(10).fill(0);
 splashPos.forEach(p => buckets[Math.min(9, Math.floor(p * 10))]++);
 console.log('墜海位置分佈（佔航程比例,不該全擠在最後一格）');
