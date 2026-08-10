@@ -18,6 +18,9 @@ export interface ViewConfig {
     camFollowStart: number;    // 飛機超過畫面高度的幾成時鏡頭開始跟
     camLag: number;            // 鏡頭跟隨速度（每秒收斂倍率）
     rocketApproach: number;    // 飛彈額外的向左速度（px/tick）。越大越晚出現、越快飛過來
+    seaCarrierSpacing: number; // 海面佈景航母的間距（px）。0 = 關閉
+    metersPerPx: number;       // 顯示用的單位換算（1 px = 幾公尺）。純表演,不影響任何邏輯
+    distanceUnit: string;
 
     skyTop: Color; skyBottom: Color;
     skyHigh: Color;            // 高空時天空漸層要染向的顏色
@@ -56,6 +59,7 @@ export class AviaView {
     private stage!: Node;
     private gSky!: Graphics;
     private gSeaBack!: Graphics;
+    private gShips!: Graphics;
     private world!: Node;
     private gTrail!: Graphics;
     private gDebug!: Graphics;
@@ -145,6 +149,7 @@ export class AviaView {
 
         this.camRoot = this.mk(this.stage, 'camRoot');
         this.gSeaBack = this.mkGraphics(this.camRoot, 'seaBack');
+        this.gShips = this.mkGraphics(this.camRoot, 'seaCarriers');
 
         this.world = this.mk(this.camRoot, 'world');
         this.carrierA = this.mk(this.world, 'carrierStart', 300, 200);
@@ -316,56 +321,112 @@ export class AviaView {
      * 船身從水線一路撐到甲板,整座船都在畫面可見範圍內。
      */
     private drawCarrier(g: Graphics, destination: boolean) {
-        const c = this.cfg.carrierColor;
-        const dark = new Color(Math.round(c.r * 0.55), Math.round(c.g * 0.55), Math.round(c.b * 0.6), 255);
-        const mid = new Color(Math.round(c.r * 0.78), Math.round(c.g * 0.78), Math.round(c.b * 0.82), 255);
-        const D = PHYS.DECK_Y;          // 甲板面高度（水面 = 0）
-        const deckH = 20;
-        const hullTop = D - deckH;
-
         g.clear();
+        this.paintCarrier(g, 0, 0, 1, 0, destination);
+    }
+
+    /**
+     * 畫一艘航母。
+     * @param cx,cy  水線位置（局部座標）
+     * @param s      縮放
+     * @param haze   0..1 空氣透視,越大越往天空色淡去（遠景船用）
+     */
+    private paintCarrier(g: Graphics, cx: number, cy: number, s: number,
+        haze: number, destination: boolean) {
+        const sky = this.cfg.skyBottom;
+        const fade = (c: Color, k = 1) => new Color(
+            Math.round(c.r + (sky.r - c.r) * haze * k),
+            Math.round(c.g + (sky.g - c.g) * haze * k),
+            Math.round(c.b + (sky.b - c.b) * haze * k), 255);
+
+        const base = this.cfg.carrierColor;
+        const c = fade(base);
+        const dark = fade(new Color(Math.round(base.r * 0.55), Math.round(base.g * 0.55), Math.round(base.b * 0.6), 255));
+        const mid = fade(new Color(Math.round(base.r * 0.78), Math.round(base.g * 0.78), Math.round(base.b * 0.82), 255));
+
+        const D = PHYS.DECK_Y * s;      // 甲板面高度（水面 = 0）
+        const deckH = 20 * s;
+        const hullTop = D - deckH;
+        const X = (v: number) => cx + v * s;
+        const Y = (v: number) => cy + v;          // 已經含 s 的值直接用
+
         // 船身：水線下方一點 → 甲板下緣,往下微收
         g.fillColor = dark;
-        g.moveTo(-152, hullTop); g.lineTo(152, hullTop);
-        g.lineTo(124, -34); g.lineTo(-118, -34);
+        g.moveTo(X(-152), Y(hullTop)); g.lineTo(X(152), Y(hullTop));
+        g.lineTo(X(124), Y(-34 * s)); g.lineTo(X(-118), Y(-34 * s));
         g.close(); g.fill();
         // 船身上半段亮一階,做出量體
+        const bandH = Math.min(46 * s, hullTop * 0.45);
         g.fillColor = mid;
-        g.rect(-152, hullTop - Math.min(46, hullTop * 0.45), 304, Math.min(46, hullTop * 0.45));
-        g.fill();
+        g.rect(X(-152), Y(hullTop - bandH), 304 * s, bandH); g.fill();
         // 舷側開口
-        g.fillColor = new Color(18, 26, 38, 190);
-        for (let x = -120; x < 120; x += 42) g.rect(x, hullTop - 34, 22, 12);
-        g.fill();
+        if (s > 0.5) {
+            g.fillColor = fade(new Color(18, 26, 38, 255));
+            for (let x = -120; x < 120; x += 42) g.rect(X(x), Y(hullTop - 34 * s), 22 * s, 12 * s);
+            g.fill();
+        }
 
         // 甲板
         g.fillColor = c;
-        g.rect(-152, hullTop, 304, deckH); g.fill();
+        g.rect(X(-152), Y(hullTop), 304 * s, deckH); g.fill();
         // 甲板中線
-        g.strokeColor = new Color(255, 255, 255, 95);
-        g.lineWidth = 3;
-        for (let x = -134; x < 134; x += 34) { g.moveTo(x, hullTop + deckH / 2); g.lineTo(x + 18, hullTop + deckH / 2); }
+        g.strokeColor = new Color(255, 255, 255, Math.round(95 * (1 - haze)));
+        g.lineWidth = 3 * s;
+        for (let x = -134; x < 134; x += 34) {
+            g.moveTo(X(x), Y(hullTop + deckH / 2)); g.lineTo(X(x + 18), Y(hullTop + deckH / 2));
+        }
         g.stroke();
 
         // 艦島（起飛艦放左邊,目的艦放右邊,才不會擋住降落點）
         const ix = destination ? 64 : -120;
         g.fillColor = dark;
-        g.rect(ix, D, 48, 46); g.fill();
-        g.fillColor = new Color(255, 210, 90, 255);
-        g.rect(ix + 8, D + 26, 32, 8); g.fill();
-        g.strokeColor = dark; g.lineWidth = 3;
-        g.moveTo(ix + 24, D + 46); g.lineTo(ix + 24, D + 74); g.stroke();
+        g.rect(X(ix), Y(D), 48 * s, 46 * s); g.fill();
+        g.fillColor = fade(new Color(255, 210, 90, 255), 0.8);
+        g.rect(X(ix + 8), Y(D + 26 * s), 32 * s, 8 * s); g.fill();
+        g.strokeColor = dark; g.lineWidth = 3 * s;
+        g.moveTo(X(ix + 24), Y(D + 46 * s)); g.lineTo(X(ix + 24), Y(D + 74 * s)); g.stroke();
 
         // 目的艦：降落導引燈
         if (destination) {
             g.fillColor = new Color(120, 255, 180, 220);
-            for (let x = -140; x < 40; x += 30) { g.circle(x, D + 6, 4); }
+            for (let x = -140; x < 40; x += 30) { g.circle(X(x), Y(D + 6 * s), 4 * s); }
             g.fill();
         }
 
         // 吃水線泡沫
-        g.strokeColor = this.cfg.foam; g.lineWidth = 4;
-        g.moveTo(-160, 2); g.lineTo(160, 2); g.stroke();
+        const f = this.cfg.foam;
+        g.strokeColor = new Color(f.r, f.g, f.b, Math.round(f.a * (1 - haze * 0.7)));
+        g.lineWidth = 4 * s;
+        g.moveTo(X(-160), Y(2 * s)); g.lineTo(X(160), Y(2 * s)); g.stroke();
+    }
+
+    /**
+     * 海面上持續出現的航母（純佈景）。
+     * 有兩層：遠景小而淡、近景大一點,各有各的視差,所以整片海一直有船在動。
+     * 它們不是降落目標 —— 目的艦有綠色導引燈,一眼分得出來。
+     */
+    private drawSeaCarriers(scroll: number) {
+        const { W, waterScreenY, seaCarrierSpacing } = this.cfg;
+        const g = this.gShips;
+        g.clear();
+        if (seaCarrierSpacing <= 0) return;
+
+        const layers = [
+            { par: 0.42, scale: 0.34, haze: 0.72, dy: 34, phase: 0 },
+            { par: 0.68, scale: 0.55, haze: 0.42, dy: 12, phase: 0.5 },
+        ];
+        for (const L of layers) {
+            const gap = seaCarrierSpacing / L.par;
+            const left = -scroll * L.par - W * 0.3;
+            const i0 = Math.floor(left / gap) - 1;
+            for (let i = i0; i < i0 + 5; i++) {
+                const h = hash01(i * 2654435761 + Math.round(L.phase * 1000));
+                const x = (i + L.phase) * gap + (h - 0.5) * gap * 0.35 + scroll * L.par;
+                if (x < -W * 0.4 || x > W * 1.4) continue;
+                const s = L.scale * (0.85 + h * 0.3);
+                this.paintCarrier(g, x, waterScreenY + L.dy, s, L.haze, false);
+            }
+        }
     }
 
     private drawPlane(g: Graphics) {
@@ -566,6 +627,7 @@ export class AviaView {
             this.skyDrawnAt = this.camY;
             this.drawSky(this.camY);
         }
+        this.drawSeaCarriers(scroll);
         this.drawSea(scroll);
         this.updateFx(dt);
         if (s && playing) {
@@ -573,8 +635,8 @@ export class AviaView {
         } else {
             this.gHud.clear();
             this.hudMult.string = '';
-            this.hudDist.string = '距離  ——';
-            this.hudAlt.string = '高度  ——';
+            this.hudDist.string = '距離  --';
+            this.hudAlt.string = '高度  --';
         }
 
         // 螢幕震動
@@ -650,13 +712,19 @@ export class AviaView {
             g.fillColor = col;
             g.roundRect(x, y, Math.max(6, w * Math.max(0, Math.min(1, p))), 10, 5); g.fill();
         };
+        // 進度條照實際比例畫（不顯示百分比數字）
         const dist = Math.min(1, t / Math.max(1, s.carrierTick));
         const alt = Math.max(0, Math.min(1, frame.y / PHYS.ALT_DISPLAY_MAX));
-        bar(126, H - 47, 230, dist, hudAccent);
-        bar(126, H - 81, 230, alt, hudColor);
+        bar(150, H - 47, 210, dist, hudAccent);
+        bar(150, H - 81, 210, alt, hudColor);
 
-        this.hudDist.string = `距離 ${Math.round(dist * 100)}%`;
-        this.hudAlt.string = `高度 ${Math.round(frame.y)}`;
+        // 讀數用實際距離／高度（純表演,單位由 metersPerPx 換算）
+        const u = this.cfg.metersPerPx;
+        const un = this.cfg.distanceUnit;
+        const flown = t * this.cfg.pxPerTick * u;
+        const total = s.carrierTick * this.cfg.pxPerTick * u;
+        this.hudDist.string = `距離 ${fmtLen(flown)} / ${fmtLen(total)} ${un}`;
+        this.hudAlt.string = `高度 ${fmtLen(frame.y * u)} ${un}`;
         this.hudMult.string = `${fmt(this.shownBalance)}×`;
         this.hudMult.color = this.targetBalance >= 20 ? hudAccent : this.cfg.textColor;
     }
@@ -844,3 +912,14 @@ function fmt(v: number) {
     return v.toFixed(2);
 }
 function easeOut(p: number) { return 1 - Math.pow(1 - p, 3); }
+/** 長度讀數：小數字保留一位,大數字取整並加千分位 */
+function fmtLen(v: number) {
+    if (v < 10) return v.toFixed(1);
+    return Math.round(v).toLocaleString('en-US');
+}
+/** 由整數種子產生穩定的 0..1（佈景船的位置/大小抖動用,每 frame 都算得出同一個值） */
+function hash01(n: number) {
+    let h = Math.imul(n ^ 0x9e3779b9, 2246822507);
+    h = Math.imul(h ^ (h >>> 13), 3266489909);
+    return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}

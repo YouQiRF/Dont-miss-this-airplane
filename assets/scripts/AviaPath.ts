@@ -132,8 +132,8 @@ export const PHYS = {
     //   2. 只有吃到 +N / ×N 才會上升,一律抬高 STEP_UP（與數字大小、當前高度無關）
     //   3. 只有吃到火箭才會有額外下降表演,一律壓低 STEP_DOWN
     //   → 每個物件的淨變化 = ±STEP − GLIDE_DROP,全局一致
-    STEP_UP: 46,
-    STEP_DOWN: 46,
+    STEP_UP: 55,            // 46 × 1.2
+    STEP_DOWN: 55,          // 46 × 1.2
     GLIDE_DROP: 22,         // 每個段落拋物線下降多少 px
     RISE_TICKS: 4,          // 升／降表演持續幾 tick（其餘時間都在拋物線下降）
     TAKEOFF_STEPS: 2,       // 第一個物件放在甲板上方幾階

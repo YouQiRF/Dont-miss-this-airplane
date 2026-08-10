@@ -101,7 +101,7 @@ const gameProps = {
     10, 12, 15, 20, 25, 40, 60, 80, 120, 250],
 
   // ④ 航線編排
-  stepUp: 46, stepDown: 46, glideDrop: 22, riseTicks: 4,
+  stepUp: 55, stepDown: 55, glideDrop: 22, riseTicks: 4,
   takeoffSteps: 2, minAlt: 130, maxAlt: 0, decoyMinY: 24,
   baseGap: 9, gapJitter: 0.35, minGap: 6, maxGap: 22, takeoffTicks: 10,
   pxPerTick: 40, pitchRun: 34, pitchMaxDeg: 42,
@@ -118,6 +118,7 @@ const gameProps = {
 
   waterScreenY: 110, planeScreenXRatio: 0.34,
   camFollowStart: 0.62, camLag: 4, rocketApproach: 55,
+  seaCarrierSpacing: 780, metersPerPx: 0.25, distanceUnit: 'm',
   trailEnabled: true, trailLength: 26, shakeIntensity: 14, showDebugPath: false,
   skyTop: COL(38, 96, 168, 255),
   skyBottom: COL(150, 214, 236, 255),

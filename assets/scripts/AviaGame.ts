@@ -88,10 +88,10 @@ export class AviaGame extends Component {
 
     // ════════════════ ④ 航線編排（沒有物理,全部是編排參數）════════════════
     @property({ type: CCFloat, group: G_PATH, tooltip: '【只有吃到才上升】吃到任何 +N 或 ×N,航線一律抬高這麼多 px。與數字大小、當前高度都無關' })
-    stepUp = 46;
+    stepUp = 55;
 
     @property({ type: CCFloat, group: G_PATH, tooltip: '【只有飛彈才有下降表演】吃到飛彈一律壓低這麼多 px' })
-    stepDown = 46;
+    stepDown = 55;
 
     @property({ type: CCFloat, group: G_PATH, tooltip: '【平飛 = 拋物線下降】每個段落固定往下掉這麼多 px。每個物件的淨變化 = ±階距 − 這個值' })
     glideDrop = 22;
@@ -192,6 +192,15 @@ export class AviaGame extends Component {
 
     @property({ type: CCFloat, group: G_VIS, tooltip: '飛彈額外的向左速度（px/tick）。飛彈一律從畫面右側往左飛,越大越晚出現、飛得越快' })
     rocketApproach = 55;
+
+    @property({ type: CCFloat, group: G_VIS, tooltip: '海面佈景航母的間距（px）。整片海會持續有船經過。0 = 關閉' })
+    seaCarrierSpacing = 780;
+
+    @property({ type: CCFloat, group: G_VIS, tooltip: 'HUD 讀數的單位換算：1 px = 幾個顯示單位。純表演,不影響任何邏輯' })
+    metersPerPx = 0.25;
+
+    @property({ type: CCString, group: G_VIS, tooltip: 'HUD 讀數的單位文字' })
+    distanceUnit = 'm';
 
     @property({ group: G_VIS }) trailEnabled = true;
     @property({ type: CCInteger, group: G_VIS, tooltip: '尾煙保留幾個取樣點' }) trailLength = 26;
@@ -349,6 +358,9 @@ export class AviaGame extends Component {
             camFollowStart: this.camFollowStart,
             camLag: this.camLag,
             rocketApproach: this.rocketApproach,
+            seaCarrierSpacing: this.seaCarrierSpacing,
+            metersPerPx: this.metersPerPx,
+            distanceUnit: this.distanceUnit,
             skyTop: this.skyTop, skyBottom: this.skyBottom, skyHigh: this.skyHigh,
             seaDeep: this.seaDeep, seaLight: this.seaLight, foam: this.foam,
             planeBody: this.planeBody, planeAccent: this.planeAccent, trailColor: this.trailColor,
