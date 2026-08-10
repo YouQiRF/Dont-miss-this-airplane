@@ -6,5 +6,11 @@
       "fitWidth": false,
       "fitHeight": true
     }
+  },
+  "__version__": "1.0.6",
+  "fbx": {
+    "legacyFbxImporter": {
+      "visible": true
+    }
   }
 }

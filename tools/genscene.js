@@ -16,8 +16,21 @@ function compressUuid(uuid) {
   return s;
 }
 
+/**
+ * ⚠ 這支腳本只在「從零建立專案」時需要跑一次。
+ *
+ * 平常改程式碼、加 @property 都不用碰它 —— 場景檔只存你在 Inspector 手動改過的覆寫值,
+ * 沒存到的欄位 Cocos 會自動用 class 裡的預設值,新欄位照樣會出現在 Inspector。
+ *
+ * 如果在 Cocos 開著的時候覆寫 game.scene / *.meta,編輯器接不住外部改動,
+ * 就會逼你重開編輯器。所以預設會跳過已存在的檔案,要真的重建才加 --force。
+ */
+const FORCE = process.argv.includes('--force');
+let skipped = 0;
+
 const w = (p, data) => {
   const full = path.join(ROOT, p);
+  if (!FORCE && fs.existsSync(full)) { skipped++; return full; }
   fs.mkdirSync(path.dirname(full), { recursive: true });
   fs.writeFileSync(full, typeof data === 'string' ? data : JSON.stringify(data, null, 2), 'utf8');
   return full;
@@ -230,4 +243,10 @@ w('.gitignore', ['library/', 'temp/', 'local/', 'build/', 'profiles/', 'native/'
 console.log('AviaGame __type__ =', GAME_TYPE);
 console.log('uuid AviaGame     =', U.game);
 console.log('scene uuid        =', U.scene);
-console.log('OK');
+if (skipped && !FORCE) {
+  console.log(`\n跳過 ${skipped} 個已存在的檔案（沒有動任何東西）。`);
+  console.log('平常不需要跑這支腳本；真的要整個重建場景才加 --force,');
+  console.log('而且務必先關閉 Cocos 編輯器,否則它會抱著舊的場景把你的改動蓋回去。');
+} else {
+  console.log('OK');
+}
