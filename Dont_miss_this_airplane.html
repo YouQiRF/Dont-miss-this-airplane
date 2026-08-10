@@ -1,0 +1,1547 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Aviamasters 離線版</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; background: #0a1420; overflow: hidden;
+    font-family: system-ui, -apple-system, "Noto Sans TC", sans-serif;
+    -webkit-user-select: none; user-select: none; }
+  #stage { position: relative; width: 100vw; height: 100vh;
+    display: flex; align-items: center; justify-content: center; }
+  canvas { display: block; border-radius: 6px; box-shadow: 0 8px 40px rgba(0,0,0,.55); }
+  #ui { position: absolute; inset: 0; pointer-events: none;
+    display: flex; flex-direction: column; justify-content: space-between;
+    padding: 18px 24px; max-width: 1280px; max-height: 720px;
+    margin: auto; color: #c4def4; }
+  .row { display: flex; justify-content: space-between; align-items: flex-end; }
+  .row.top { align-items: flex-start; font-size: 15px; }
+  #bal { font-size: 20px; color: #eaf4ff; }
+  #betl { opacity: .75; }
+  #win { font-size: 22px; font-weight: 700; color: #ffca46; }
+  #chips { display: flex; gap: 6px; flex-wrap: wrap; max-width: 62%; pointer-events: auto; }
+  .right { display: flex; align-items: center; gap: 10px; pointer-events: auto; }
+  #speeds { display: flex; gap: 5px; }
+  button { font: inherit; color: #dceaf8; cursor: pointer;
+    background: rgba(255,255,255,.10); border: 1px solid rgba(255,255,255,.22);
+    border-radius: 9px; transition: transform .06s, background .12s; }
+  button:hover:not(:disabled) { background: rgba(255,255,255,.18); }
+  button:active:not(:disabled) { transform: scale(.94); }
+  button:disabled { opacity: .38; cursor: default; }
+  button.on { background: #ffca46; border-color: #fff; color: #16202e; font-weight: 700; }
+  .chip { padding: 8px 12px; font-size: 15px; min-width: 54px; }
+  .sp { padding: 6px 10px; font-size: 13px; }
+  #spin { padding: 16px 34px; font-size: 24px; font-weight: 800; letter-spacing: .5px; }
+  #info { position: absolute; left: 0; right: 0; bottom: 92px; text-align: center;
+    font-size: 15px; opacity: .85; }
+  @media (max-width: 820px) {
+    #chips { max-width: 55%; }
+    .chip { padding: 6px 9px; font-size: 13px; min-width: 44px; }
+    #spin { padding: 12px 22px; font-size: 19px; }
+  }
+</style>
+</head>
+<body>
+<div id="stage"><canvas id="c"></canvas><div id="ui"></div></div>
+<script type="module">
+/* ============================================================
+ * 以下由 tools/genoffline.js 自動產生，請勿直接修改這個檔案。
+ * 演算法來源：assets/scripts/AviaPath.ts
+ * 渲染來源：  tools/offline/renderer.js
+ * 產生時間：  2026-08-10T08:21:11.410Z
+ * ============================================================ */
+
+/* ───────────────── 演算法（AviaPath.ts） ───────────────── */
+/**
+ * AviaPath.ts — 路徑合成演算法（純邏輯,不 import 任何 cc 模組,可單獨在 node 跑測試）
+ *
+ * 輸入：{ multiplier, landed }  ← 線上版由 server 給;離線版本地生成
+ * 輸出：PerformanceScript       ← 每一 tick 的高度、每個物件的座標、每個演出節拍
+ *
+ * 兩條原則：
+ *   1. 結果先決 —— 先有結果,再造一條「演起來剛好等於這個結果」的路徑。
+ *   2. 航線是編排出來的,不是模擬出來的 —— 沒有重力、沒有速度積分。
+ *      每段是一條解析式的彈道拋物線,形狀完全由參數控制,不會出現物理跑飛。
+ *
+ * 所有可調參數都集中在下面幾個 configure* 函式,由 AviaGame 的 Inspector 餵進來。
+ */
+
+// ══════════════════════════════════════════════════════════════
+//  型別
+// ══════════════════════════════════════════════════════════════
+
+                              
+                                                 
+                                             
+                    
+ 
+
+                     
+                                       
+                                      
+                         
+
+                             
+               
+                 
+                                                
+                  
+                                                                
+                       
+                          
+ 
+
+                                                                              
+
+                      
+                                                           
+                                                                        
+
+/**
+ * 結束方式：
+ *   LAND       降落在目的艦 → 結算
+ *   SPLASH     直接墜海 → 歸零
+ *   SLIDE_OFF  該墜海的位置剛好有一艘航母 → 觸艦、滑行、從甲板尾端翻落海中 → 一樣歸零
+ */
+                                                         
+
+                       
+                 
+                   
+                                     
+                   
+ 
+
+/**
+ * 每局隨機化的手感縮放。只影響觀感,不影響結果。
+ * 注意這裡「沒有」升降幅度的縮放 —— 升降幅度是固定常數,永遠等高。
+ */
+                                       
+
+                                    
+                    
+                    
+                       
+                                     
+                                                
+                    
+                          
+                  
+                                             
+                                         
+                                                  
+                       
+                                                      
+                      
+                                                   
+                                                
+                                                         
+                 
+ 
+
+// ══════════════════════════════════════════════════════════════
+//  可設定區塊
+// ══════════════════════════════════════════════════════════════
+
+/** 符號表：+N 物件、×N 物件、火箭除數。全部可在 Inspector 改。 */
+                               
+                                                      
+                                                     
+                                          
+                       
+                       
+                                                              
+                                            
+                                                           
+ 
+
+const SYM               = {
+    pickups: [1, 2, 5, 10],
+    boosts: [2, 3, 4, 5],
+    rocketDivisor: 2,
+    maxRockets: 6,
+    maxObjects: 30,
+    boostChance: 0.30,
+    rocketChance: 0.22,
+    pickupStepTarget: 8,
+};
+
+function configureSymbols(p                       ) {
+    if (p.pickups?.length) SYM.pickups = [...p.pickups].filter(v => v > 0).sort((a, b) => b - a);
+    if (p.boosts?.length) SYM.boosts = [...p.boosts].filter(v => v > 1).sort((a, b) => b - a);
+    if (p.rocketDivisor && p.rocketDivisor > 1) SYM.rocketDivisor = p.rocketDivisor;
+    if (p.maxRockets !== undefined) SYM.maxRockets = p.maxRockets;
+    if (p.maxObjects !== undefined) SYM.maxObjects = p.maxObjects;
+    if (p.boostChance !== undefined) SYM.boostChance = p.boostChance;
+    if (p.rocketChance !== undefined) SYM.rocketChance = p.rocketChance;
+    if (p.pickupStepTarget) SYM.pickupStepTarget = Math.max(1, p.pickupStepTarget);
+}
+
+/**
+ * 演出參數（單位直接用 px / tick,省掉換算層）。
+ * 這裡沒有任何「物理」概念 —— 沒有重力、沒有速度、沒有終端速度。
+ * 航線就是一串關鍵影格,這些數字直接決定影格放在哪。
+ */
+const PHYS = {
+    WATER_Y: 0,
+    DECK_Y: 130,            // 航母甲板高度
+    DECOY_MIN_Y: 24,        // 誘餌可放置的最低高度
+    ALT_DISPLAY_MAX: 420,   // HUD 高度條的參考值（純顯示。高度本身沒有上限）
+    HIT_RADIUS: 46,
+    PX_PER_TICK: 40,
+    PITCH_RUN: 34,          // 算俯仰角用的水平參考量,越小抬頭越誇張
+    PITCH_MAX_DEG: 42,      // 俯仰角上限,避免降落段機頭插到底
+
+    // ── 飛行規則（每一段的形狀都由這三個數字決定）──
+    //   1. 平飛 = 拋物線下降,每段固定掉 GLIDE_DROP
+    //   2. 只有吃到 +N / ×N 才會上升,一律抬高 STEP_UP（與數字大小、當前高度無關）
+    //   3. 只有吃到火箭才會有額外下降表演,一律壓低 STEP_DOWN
+    //   → 每個物件的淨變化 = ±STEP − GLIDE_DROP,全局一致
+    STEP_UP: 82,            // 吃到 +N / ×N 時,弧線頂點比命中點高多少（55 × 1.5）
+    STEP_DOWN: 82,          // 吃到飛彈時往下砸多少（55 × 1.5）
+    GLIDE_DROP: 30,         // 每段拋物線從頂點再往下掉多少（決定弧線後半的落差）
+    /**
+     * 弧線頂點位置偏移。1 = 幾何上正確的彈道頂點（由 STEP_UP 與 GLIDE_DROP 的比例算出）,
+     * 調小 → 頂點提前、上升更急促;調大 → 頂點延後、爬升更悠長。
+     */
+    ARC_APEX_BIAS: 1,
+    ROCKET_DIVE_FRAC: 0.45, // 飛彈命中後,前 45% 的段落用來俯衝,其餘滑降
+    LAST_ARC_TICKS: 7,      // 最後一個物件的升／降表演長度（之後就交給收尾段）
+    TAKEOFF_STEPS: 2,       // 第一個物件放在甲板上方幾階
+    MIN_ALT: 130,           // 航線最低只能降到這裡（= 甲板高度）
+
+    // ── 段落形狀 ──
+    BASE_GAP: 9,            // 物件間距（tick）。調小 → 場上物件更多更密
+    GAP_JITTER: 0.35,
+    MIN_GAP: 6,
+    MAX_GAP: 22,
+    TAKEOFF_TICKS: 10,
+
+    // ── 收尾 ──
+    LAND_RATE: 9,           // 降落段每 tick 下降 px
+    LAND_TICKS_MIN: 10,
+    LAND_TICKS_MAX: 34,
+    SPLASH_RATE: 14,        // 墜海段每 tick 下降 px
+    SPLASH_TICKS_MIN: 8,
+    SPLASH_TICKS_MAX: 22,
+
+    // ── 誘餌 ──
+    DECOY_DENSITY: 0.35,    // 每個空 tick 生成誘餌的機率
+    DECOY_CLEARANCE: 1.9,   // 誘餌離航線的最小淨空 = HIT_RADIUS × 這個倍數（保證碰不到）
+    DECOY_NEAR_MISS: 1.45,  // 「差一點」誘餌的淨空倍數,仍然碰不到
+
+    // ── 終點保證 ──
+    //  航線一定是有限的、一定有終點：
+    //   · MAX_ROUND_TICKS 是局長上限,超過會自動縮短物件間距重排
+    //   · 實際採用的上限 = max(這個值, 最緊排列所需長度) → 這個上限一定達得到
+    //   · 不論贏輸,終點一定存在（贏 = 降落在目的艦,輸 = 墜海,目的艦仍在前方可見）
+    MAX_ROUND_TICKS: 300,
+    MAX_ALT: 0,             // 高度上限。0 = 不封頂（天空無限,鏡頭會跟上去）
+    TAIL_TICKS: 26,
+};
+
+function configurePhys(p                      ) { Object.assign(PHYS, p); }
+
+/**
+ * 海面上的航母佈局。
+ *
+ * 位置是確定性的 —— 演算法與渲染共用這幾個函式,所以兩邊看到的船一定在同一個地方。
+ * 這很重要：「該落海卻剛好停在航母上」這條規則要成立,演算法必須知道船在哪。
+ */
+const SEA = {
+    SPACING: 1500,   // 船距（px）。0 = 海面上沒有佈景船
+    HALF_W: 152,     // 甲板半寬
+    JITTER: 0.25,    // 位置抖動比例
+};
+
+function configureSea(p                     ) { Object.assign(SEA, p); }
+
+/** 由整數種子產生穩定的 0..1 */
+function hash01(n        ) {
+    let h = Math.imul(n ^ 0x9e3779b9, 2246822507);
+    h = Math.imul(h ^ (h >>> 13), 3266489909);
+    return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+
+/** 第 i 艘佈景船的中心 x */
+function seaCarrierX(i        )         {
+    return i * SEA.SPACING + (hash01(i * 2654435761) - 0.5) * SEA.SPACING * SEA.JITTER;
+}
+
+/** 這個 x 底下有沒有甲板？有就回傳船的中心 x,沒有回 null。起飛艦（x≈0）不算。 */
+function carrierDeckAt(x        )                {
+    if (SEA.SPACING <= 0) return null;
+    const i = Math.round(x / SEA.SPACING);
+    for (let k = i - 1; k <= i + 1; k++) {
+        const cx = seaCarrierX(k);
+        if (Math.abs(cx) < SEA.HALF_W * 2) continue;     // 起飛艦的位置不放佈景船
+        if (Math.abs(x - cx) <= SEA.HALF_W) return cx;
+    }
+    return null;
+}
+
+const STYLE_RANGE = {
+    gapMin: 0.85, gapMax: 1.20,     // 間距縮放（唯一的每局隨機項,升降幅度永遠固定）
+};
+
+function configureStyle(p                             ) { Object.assign(STYLE_RANGE, p); }
+
+const TICK_MS = { slow: 140, medium: 82, fast: 50, ultra: 24 };
+                                         
+
+function configureTickMs(p                         ) { Object.assign(TICK_MS, p); }
+
+// ══════════════════════════════════════════════════════════════
+//  0. 確定性亂數（seed = roundId → 同一局永遠長一樣,可重播）
+// ══════════════════════════════════════════════════════════════
+
+function xmur3(str        ) {
+    let h = 1779033703 ^ str.length;
+    for (let i = 0; i < str.length; i++) {
+        h = Math.imul(h ^ str.charCodeAt(i), 3432918353);
+        h = (h << 13) | (h >>> 19);
+    }
+    return () => {
+        h = Math.imul(h ^ (h >>> 16), 2246822507);
+        h = Math.imul(h ^ (h >>> 13), 3266489909);
+        h ^= h >>> 16;
+        return h >>> 0;
+    };
+}
+
+class Rng {
+            a        ;         b        ;         c        ;         d        ;
+    constructor(seed        ) {
+        const s = xmur3(seed);
+        this.a = s(); this.b = s(); this.c = s(); this.d = s();
+    }
+    next()         {                       // sfc32
+        const t = (((this.a + this.b) | 0) + this.d) | 0;
+        this.d = (this.d + 1) | 0;
+        this.a = this.b ^ (this.b >>> 9);
+        this.b = (this.c + (this.c << 3)) | 0;
+        this.c = (this.c << 21) | (this.c >>> 11);
+        this.c = (this.c + t) | 0;
+        return (t >>> 0) / 4294967296;
+    }
+    int(n        ) { return Math.floor(this.next() * n); }
+    range(lo        , hi        ) { return lo + this.next() * (hi - lo); }
+    pick   (a              )    { return a[this.int(a.length)]; }
+    chance(p        ) { return this.next() < p; }
+}
+
+// ══════════════════════════════════════════════════════════════
+//  1. 分解：把最終倍數拆成物件序列（反向建構）
+//
+//     正向  +k   ×m   ÷d(火箭)
+//     逆向  -k   ÷m   ×d
+//
+//     關鍵性質：只有火箭能製造小數。所以 0.5× 必然含奇數顆火箭。
+//     算術精確性：預設符號表下（+整數 / ×整數 / ÷2）,所有可達值都是
+//     k/2^j（二進位有理數）→ double 完全精確,不需要定點數。
+// ══════════════════════════════════════════════════════════════
+
+const EPS = 1e-9;
+const isInt = (v        ) => Math.abs(v - Math.round(v)) < EPS;
+
+function pickAdd(adds          , t        , rng     )         {
+    // 期望用 pickupStepTarget 步湊完 → 每步大約 rem / target
+    const want = (t - 1) / SYM.pickupStepTarget;
+    const w = adds.map(k => 1 / (1 + Math.abs(want - k)));
+    const s = w.reduce((a, b) => a + b, 0);
+    let r = rng.next() * s;
+    for (let i = 0; i < adds.length; i++) if ((r -= w[i]) < 0) return adds[i];
+    return adds[adds.length - 1];
+}
+
+function decompose(m        , rng     , boostBias = 0)            {
+    const D = SYM.rocketDivisor;
+
+    let minRockets = 0;
+    for (let p = m; !isInt(p); p *= D) {
+        if (++minRockets > 24) throw new Error(`倍數 ${m} 在目前符號表下不可達`);
+    }
+    let budget = Math.min(SYM.maxRockets, Math.max(minRockets, minRockets + rng.int(3)));
+    if (budget === 0 && rng.chance(0.8)) budget = 1;   // 讓 1× 的局也有戲（吃到再被打回來）
+
+    const pBoost = Math.min(0.9, SYM.boostChance + boostBias * 0.1);
+    const ops            = [];
+    let t = m, guard = 0;
+
+    while (Math.abs(t - 1) > EPS || budget > 0) {
+        if (++guard > 600) throw new Error('decompose stuck');
+
+        const frac = !isInt(t);
+        const atOne = Math.abs(t - 1) <= EPS;
+        const canRocket = budget > 0 && t * D <= 20000;
+
+        if (canRocket && (frac || atOne || rng.chance(SYM.rocketChance))) {
+            t *= D; budget--; ops.push({ kind: 'ROCKET' }); continue;
+        }
+        if (frac) throw new Error('小數但沒有火箭預算');
+
+        const divs = SYM.boosts.filter(b => isInt(t / b) && t / b >= 1 - EPS);
+        if (divs.length && rng.chance(pBoost)) {
+            const b = rng.pick(divs); t = Math.round(t / b);
+            ops.push({ kind: 'BOOST', value: b }); continue;
+        }
+        const adds = SYM.pickups.filter(k => t - k >= 1 - EPS);
+        if (adds.length) {
+            const k = pickAdd(adds, t, rng); t -= k;
+            ops.push({ kind: 'PICKUP', value: k }); continue;
+        }
+        if (canRocket) { t *= D; budget--; ops.push({ kind: 'ROCKET' }); continue; }
+        throw new Error(`t=${t} 無可用逆運算`);
+    }
+
+    ops.reverse();          // 逆向建構完 → 反轉成正向播放順序
+    return ops;
+}
+
+/** 正向重算每個物件之後的 Counter Balance,同時當作 decompose 的自我驗證 */
+function evaluate(ops           )           {
+    let t = 1; const out           = [];
+    for (const o of ops) {
+        if (o.kind === 'PICKUP') t += o.value;
+        else if (o.kind === 'BOOST') t *= o.value;
+        else t /= SYM.rocketDivisor;
+        out.push(t);
+    }
+    return out;
+}
+
+/** 湊不到精確值時的退路：貪婪逼近,並回報實際達成值 */
+function approximate(m        , rng     )            {
+    const ops            = [];
+    let t = 1;
+    for (let i = 0; i < SYM.maxObjects; i++) {
+        const cands                               = [];
+        for (const p of SYM.pickups) cands.push({ op: { kind: 'PICKUP', value: p }, v: t + p });
+        for (const b of SYM.boosts) cands.push({ op: { kind: 'BOOST', value: b }, v: t * b });
+        cands.push({ op: { kind: 'ROCKET' }, v: t / SYM.rocketDivisor });
+
+        let best = cands[0], bestD = Math.abs(cands[0].v - m);
+        for (const c of cands) {
+            const d = Math.abs(c.v - m) * rng.range(0.97, 1.03);
+            if (d < bestD) { best = c; bestD = d; }
+        }
+        if (bestD >= Math.abs(t - m)) break;
+        ops.push(best.op); t = best.v;
+    }
+    return ops;
+}
+
+function decomposeSafe(m        , rng     )                                     {
+    for (let attempt = 0; attempt < 24; attempt++) {
+        try {
+            const ops = decompose(m, rng, attempt);
+            if (ops.length === 0) { if (Math.abs(m - 1) < EPS) return { ops, exact: true }; continue; }
+            const b = evaluate(ops);
+            if (ops.length <= SYM.maxObjects && Math.abs(b[b.length - 1] - m) < 1e-7) {
+                return { ops, exact: true };
+            }
+        } catch { /* 換一組亂數再試 */ }
+    }
+    console.warn(`[AviaPath] 符號表湊不出 ${m}×,退回近似值`);
+    return { ops: approximate(m, rng), exact: false };
+}
+
+/** 落海局：沒有數值約束,自由灑一段好看的「近失」序列 */
+function teaserOps(rng     )            {
+    const n = 5 + rng.int(10);
+    const ops            = [];
+    for (let i = 0; i < n; i++) {
+        const r = rng.next();
+        if (r < 0.62) ops.push({ kind: 'PICKUP', value: rng.pick(SYM.pickups) });
+        else if (r < 0.86) ops.push({ kind: 'BOOST', value: rng.pick(SYM.boosts) });
+        else ops.push({ kind: 'ROCKET' });
+    }
+    // 55% 的輸局用火箭收尾 =「最後一刻被打下來」;其餘是「高度用盡緩緩沉沒」
+    if (rng.chance(0.55)) ops.push({ kind: 'ROCKET' });
+    return ops;
+}
+
+// ══════════════════════════════════════════════════════════════
+//  2. 航線編排（沒有物理,全部是解析式段落）
+//
+//  飛行規則：
+//    ① 平飛 = 拋物線下降。每個段落固定掉 GLIDE_DROP,曲線 y = peak − drop·s²
+//       （s² 讓它由緩到急,就是拋物線的下半段）
+//    ② 只有吃到 +N / ×N 才會上升,一律抬 STEP_UP,持續 RISE_TICKS
+//    ③ 只有吃到火箭才會有額外下降表演,一律壓 STEP_DOWN,持續 RISE_TICKS
+//    ④ 除了上面兩種表演與起飛爬升,航線任何時刻都在下降
+//
+//  每個物件的淨變化 = ±STEP − GLIDE_DROP,全局一致。
+//  段落是逐 tick 直接算出來的,不經過樣條,所以不會有 overshoot 造成的意外上升。
+// ══════════════════════════════════════════════════════════════
+
+/** 升／降表演的幅度。所有 +N / ×N 一律 +STEP_UP,所有火箭一律 −STEP_DOWN。 */
+function stepFor(op         )         {
+    return op.kind === 'ROCKET' ? -PHYS.STEP_DOWN : PHYS.STEP_UP;
+}
+
+function rollStyle(rng     )        {
+    return { gap: rng.range(STYLE_RANGE.gapMin, STYLE_RANGE.gapMax) };
+}
+
+                      
+                    
+                                        
+                         
+                        
+                         
+                                                                        
+                       
+                      
+ 
+
+const easeOutCubic = (s        ) => 1 - Math.pow(1 - s, 3);
+
+/**
+ * 一段完整的彈道拋物線。
+ *
+ *   y(s) = apex − k·(s − p)²
+ *
+ * 頂點高度固定是 y0 + rise,段尾固定落在 y0 + rise − fall。
+ * 頂點位置 p 由 rise 與 fall 的比例解出來：
+ *
+ *   k·p²     = rise      （從起點爬到頂點）
+ *   k·(1−p)² = fall      （從頂點掉到段尾）
+ *   ⇒ (1−p)/p = √(fall/rise)  ⇒  p = 1/(1 + √(fall/rise))
+ *
+ * 所以弧線兩側的曲率自動一致 —— 這就是「看起來像真的被拋出去」的關鍵。
+ * 上一版是「4 tick 快速彈起 + 另一條拋物線」,接縫處有個平頂,弧度不連續。
+ */
+function arcSegment(y0        , rise        , fall        , n        , out          ) {
+    const apex = y0 + rise;
+    if (rise <= 0.01) {                       // 沒有上升 → 退化成單純的拋物線下降
+        for (let t = 1; t <= n; t++) { const s = t / n; out.push(y0 - fall * s * s); }
+        return apex;
+    }
+    const r = Math.sqrt(Math.max(0, fall) / rise);
+    const p = clamp01(1 / (1 + r) * PHYS.ARC_APEX_BIAS, 0.12, 0.88);
+    const k = rise / (p * p);
+    for (let t = 1; t <= n; t++) {
+        const s = t / n;
+        out.push(apex - k * (s - p) * (s - p));
+    }
+    // p 被 clamp（或 ARC_APEX_BIAS ≠ 1）時終點會有微小誤差 → 直接釘死,
+    // 保證「每個物件的淨變化 = STEP_UP − GLIDE_DROP」這條契約不會鬆掉
+    out[out.length - 1] = apex - fall;
+    return p;
+}
+
+/**
+ * 飛彈段落：單調下降,不可能有上升。
+ * 前段快速俯衝（撞擊感）,後段接回拋物線滑降,兩者相加仍然單調。
+ */
+function diveSegment(y0        , total        , n        , out          ) {
+    const f = PHYS.ROCKET_DIVE_FRAC;
+    for (let t = 1; t <= n; t++) {
+        const s = t / n;
+        const hit = easeOutCubic(Math.min(1, s / f));   // 撞擊：快進慢出
+        const glide = s * s;                            // 滑降：拋物線
+        out.push(y0 - total * (0.7 * hit + 0.3 * glide));
+    }
+}
+
+function clamp01(v        , lo        , hi        ) { return Math.max(lo, Math.min(hi, v)); }
+function clampInt(v        , lo        , hi        ) { return Math.max(lo, Math.min(hi, Math.round(v))); }
+
+/** 高度上限。MAX_ALT = 0 表示不封頂（天空無限）。 */
+function clampAlt(a        )         {
+    const lo = PHYS.MIN_ALT;
+    const hi = PHYS.MAX_ALT > 0 ? Math.max(lo + PHYS.STEP_UP, PHYS.MAX_ALT) : Infinity;
+    return Math.max(lo, Math.min(hi, a));
+}
+
+/**
+ * 這一局在最緊排列下最短要多少 tick。
+ * 用它把 MAX_ROUND_TICKS 夾成「一定做得到」的值 —— 保證航線永遠有限、永遠有終點,
+ * 不論 Inspector 被調成什麼樣子。
+ */
+function minimumRouteTicks(ops           , landed         )         {
+    const end = landed ? PHYS.LAND_TICKS_MAX : PHYS.SPLASH_TICKS_MAX;
+    return PHYS.MIN_GAP * (ops.length + 1) + PHYS.LAST_ARC_TICKS + end + 4;
+}
+
+/** 走完一整條航線,逐 tick 產出高度。回傳的最後一個 tick 就是終點。 */
+function buildRoute(ops           , landed         , rng     , st       , gapScale        ) {
+    const ys           = [];
+    const hits                                = [];
+    const riseWindows                                 = [];
+    const G = (n        ) => Math.max(PHYS.MIN_GAP, Math.min(PHYS.MAX_GAP, Math.round(n)));
+
+    // ── 起飛：從航母甲板拋出去,弧線頂點過後開始下降,剛好落在第一個物件上 ──
+    const firstY = clampAlt(PHYS.MIN_ALT + PHYS.TAKEOFF_STEPS * PHYS.STEP_UP);
+    const tk0 = Math.max(PHYS.MIN_GAP, Math.round(PHYS.TAKEOFF_TICKS * st.gap * gapScale));
+    ys.push(PHYS.DECK_Y);
+    const p0 = arcSegment(PHYS.DECK_Y, firstY + PHYS.GLIDE_DROP - PHYS.DECK_Y,
+        PHYS.GLIDE_DROP, tk0, ys);
+    riseWindows.push({ from: 0, to: Math.ceil(p0 * tk0) + 1 });
+    // 此時 ys.length === tk0 + 1,下一個索引就是第一個物件的 tick
+
+    let cur = firstY;
+
+    for (let i = 0; i < ops.length; i++) {
+        const tick = ys.length;
+        ys.push(cur);                       // 命中當下
+        hits.push({ tick, y: cur });
+
+        const isLast = i === ops.length - 1;
+        const jit = 1 + rng.range(-PHYS.GAP_JITTER, PHYS.GAP_JITTER);
+        const segLen = isLast ? 0 : G(PHYS.BASE_GAP * st.gap * gapScale * jit);
+
+        // 最後一個物件後面接的是收尾段,只演完升／降本身就交棒
+        const tailLen = Math.max(3, Math.round(PHYS.LAST_ARC_TICKS * st.gap * gapScale));
+
+        if (ops[i].kind === 'ROCKET') {
+            // 飛彈：單調俯衝,不可能有上升
+            const bottom = Math.max(PHYS.MIN_ALT, cur - PHYS.STEP_DOWN);
+            if (isLast) {
+                diveSegment(cur, cur - bottom, tailLen, ys);
+                cur = ys[ys.length - 1];
+                break;
+            }
+            const endY = Math.max(PHYS.MIN_ALT, bottom - PHYS.GLIDE_DROP);
+            diveSegment(cur, cur - endY, segLen, ys);
+            cur = ys[ys.length - 1];
+        } else {
+            // 加值／乘算：一整段完整的彈道弧線,頂點 = 命中點 + STEP_UP
+            const apexY = clampAlt(cur + PHYS.STEP_UP);
+            const rise = apexY - cur;
+            if (isLast) {
+                // 只演上升的那一半,頂點交給收尾段接著往下帶
+                arcSegment(cur, rise, 0, tailLen, ys);
+                riseWindows.push({ from: tick, to: tick + tailLen + 1 });
+                cur = ys[ys.length - 1];
+                break;
+            }
+            const fall = Math.min(PHYS.GLIDE_DROP, Math.max(0, apexY - PHYS.MIN_ALT));
+            const p = arcSegment(cur, rise, fall, segLen, ys);
+            riseWindows.push({ from: tick, to: tick + Math.ceil(p * segLen) + 1 });
+            cur = ys[ys.length - 1];
+        }
+    }
+
+    // ── 收尾 ──
+    let ending             = landed ? 'LAND' : 'SPLASH';
+    let slideFrom = -1;
+
+    if (landed) {
+        const fall = Math.max(0, cur - PHYS.DECK_Y);
+        const endT = clampInt(fall / Math.max(1, PHYS.LAND_RATE), PHYS.LAND_TICKS_MIN, PHYS.LAND_TICKS_MAX);
+        for (let t = 1; t <= endT; t++) {
+            const s = t / endT;
+            ys.push(cur - fall * (s * s * (3 - 2 * s)));   // 由緩到急再拉平
+        }
+    } else {
+        // 墜海：逐 tick 往下掉。掉到甲板高度時如果底下剛好有一艘航母,
+        // 就改成「觸艦 → 滑行 → 從甲板尾端翻落海中」。
+        const base = ys.length - 1;
+        const fall = Math.max(0, cur - PHYS.WATER_Y);
+        const endT = clampInt(fall / Math.max(1, PHYS.SPLASH_RATE),
+            PHYS.SPLASH_TICKS_MIN, PHYS.SPLASH_TICKS_MAX);
+
+        let hitDeckAt = -1, deckCx = 0;
+        for (let t = 1; t <= endT; t++) {
+            const s = t / endT;
+            const y = cur - fall * s * s;                  // 拋物線加速砸下去
+            const tick = base + t;
+            if (y <= PHYS.DECK_Y) {
+                const cx = carrierDeckAt(tick * PHYS.PX_PER_TICK);
+                if (cx !== null) { hitDeckAt = tick; deckCx = cx; break; }
+            }
+            ys.push(y);
+        }
+
+        if (hitDeckAt >= 0) {
+            ending = 'SLIDE_OFF';
+            slideFrom = ys.length;                          // 觸艦的那一 tick
+            ys.push(PHYS.DECK_Y);
+
+            // 滑行到甲板尾端
+            const farEdge = deckCx + SEA.HALF_W;
+            const slideT = Math.max(3,
+                Math.ceil((farEdge - hitDeckAt * PHYS.PX_PER_TICK) / PHYS.PX_PER_TICK));
+            for (let k = 1; k <= slideT; k++) {
+                // 一點點彈跳,像真的在甲板上滑
+                ys.push(PHYS.DECK_Y + Math.max(0, 6 - k) * 1.2);
+            }
+            // 從甲板尾端翻落
+            const dropT = Math.max(5, Math.round(PHYS.DECK_Y / PHYS.SPLASH_RATE));
+            for (let k = 1; k <= dropT; k++) {
+                const s = k / dropT;
+                ys.push(PHYS.DECK_Y * (1 - s * s));
+            }
+        } else if (ys.length - 1 < base + endT) {
+            // 迴圈提前結束但沒碰到船（不該發生,保險）
+            for (let t = ys.length - base; t <= endT; t++) {
+                const s = t / endT;
+                ys.push(cur - fall * s * s);
+            }
+        }
+        ys[ys.length - 1] = PHYS.WATER_Y;                   // 終點釘死在水面
+    }
+
+    return { ys, hits, riseWindows, terminalTick: ys.length - 1, ending, slideFrom };
+}
+
+function planFlight(ops           , landed         , rng     , st       )             {
+    // 局長上限：取設定值與「最緊排列所需長度」兩者較大者 → 這個上限一定達得到
+    const cap = Math.max(PHYS.MAX_ROUND_TICKS, minimumRouteTicks(ops, landed));
+
+    let gapScale = 1;
+    let R = buildRoute(ops, landed, rng, st, gapScale);
+    for (let i = 0; i < 8 && R.terminalTick > cap; i++) {
+        gapScale *= (cap / R.terminalTick) * 0.96;
+        R = buildRoute(ops, landed, rng, st, gapScale);
+    }
+
+    const { ys, hits, riseWindows, terminalTick, ending, slideFrom } = R;
+    const maxPitch = PHYS.PITCH_MAX_DEG * Math.PI / 180;
+    const frames          = [];
+    let peak = 0;
+    for (let t = 0; t <= terminalTick; t++) {
+        const y = ys[t];
+        peak = Math.max(peak, y);
+        const dy = (ys[Math.min(t + 1, terminalTick)] - ys[Math.max(t - 1, 0)]) / 2;
+        const pitch = Math.max(-maxPitch, Math.min(maxPitch, Math.atan2(dy, PHYS.PITCH_RUN)));
+        frames.push({ tick: t, y, vy: dy, pitch });
+    }
+
+    // 航母位置：贏 = 降落點;輸 = 墜海點再往前一段（看得到、到不了）
+    const minGapPx = ending === 'SLIDE_OFF' ? SEA.HALF_W * 2 + 120 : 0;
+    const minGapTicks = Math.ceil(minGapPx / PHYS.PX_PER_TICK);
+    const carrierTick = landed
+        ? terminalTick
+        : terminalTick + Math.max(minGapTicks,
+            rng.chance(0.7) ? 6 + rng.int(11) : 24 + rng.int(28));
+
+    return { frames, hits, terminalTick, carrierTick, peakAltitude: peak, riseWindows, ending, slideFrom };
+}
+
+// ══════════════════════════════════════════════════════════════
+//  3. 誘餌物件
+//
+//  場上散佈一堆「無關緊要」的加減數字。它們不參與任何運算,
+//  而且用幾何淨空硬性保證：飛機絕對碰不到。
+//
+//  為什麼需要：如果場上每一個物件都被吃到,玩家三局就會發現路徑是假的。
+// ══════════════════════════════════════════════════════════════
+
+function randomDecoyKind(rng     )          {
+    const r = rng.next();
+    if (r < 0.52) return { kind: 'PICKUP', value: rng.pick(SYM.pickups) };
+    if (r < 0.78) return { kind: 'BOOST', value: rng.pick(SYM.boosts) };
+    return { kind: 'ROCKET' };     // 閃過的火箭爽度最高
+}
+
+function scatterDecoys(plan            , landed         , rng     , startId        )               {
+    const out               = [];
+    const yAt = (t        ) =>
+        plan.frames[Math.max(0, Math.min(plan.frames.length - 1, t))].y;
+
+    // 物件在水平方向也有體積 → 淨空要檢查整個佔位寬度,不能只看單一 tick
+    const span = Math.ceil(PHYS.HIT_RADIUS / PHYS.PX_PER_TICK) + 1;
+    const clearance = (t        , y        ) => {
+        let min = Infinity;
+        for (let k = -span; k <= span; k++) min = Math.min(min, Math.abs(y - yAt(t + k)));
+        return min;
+    };
+    const hardMin = PHYS.HIT_RADIUS * PHYS.DECOY_CLEARANCE;
+    const nearMin = PHYS.HIT_RADIUS * PHYS.DECOY_NEAR_MISS;
+
+    let id = startId;
+    const end = plan.terminalTick;
+
+    for (let t = 3; t < end - 2; t++) {
+        if (plan.hits.some(h => Math.abs(h.tick - t) < 3)) continue;
+        if (!rng.chance(PHYS.DECOY_DENSITY)) continue;
+
+        const wantNear = rng.chance(0.25);
+        const min = wantNear ? nearMin : hardMin;
+        const up = rng.chance(0.58);
+
+        // 在航線上/下方找一個滿足淨空的位置,試幾次不行就跳過
+        let placed = false;
+        for (let attempt = 0; attempt < 4 && !placed; attempt++) {
+            const d = min + PHYS.HIT_RADIUS * rng.range(0.05, wantNear ? 0.25 : 2.2);
+            const y = yAt(t) + (up ? d : -d);
+            if (y < PHYS.DECOY_MIN_Y) continue;
+            if (clearance(t, y) <= min) continue;        // 淨空不足 → 換一個距離
+            out.push({
+                id: id++, tick: t, y, kind: randomDecoyKind(rng),
+                hit: false, nearMiss: wantNear,
+            });
+            placed = true;
+        }
+    }
+
+    // 落海局：墜海前塞一顆高價誘餌 →「就差那一點」
+    if (!landed && end > 12) {
+        const t = end - (4 + rng.int(5));
+        const y = yAt(t) + nearMin + PHYS.HIT_RADIUS * 0.2;
+        if (clearance(t, y) > nearMin) {
+            out.push({
+                id: id++, tick: t, y,
+                kind: { kind: 'BOOST', value: SYM.boosts[rng.int(Math.max(1, SYM.boosts.length - 1))] },
+                hit: false, nearMiss: true,
+            });
+        }
+    }
+    return out;
+}
+
+// ══════════════════════════════════════════════════════════════
+//  4. 組裝
+// ══════════════════════════════════════════════════════════════
+
+function buildPerformance(result             )                    {
+    const rng = new Rng(result.roundId);
+    const style = rollStyle(rng);
+
+    let ops           , exact = true;
+    if (result.landed) { const r = decomposeSafe(result.multiplier, rng); ops = r.ops; exact = r.exact; }
+    else ops = teaserOps(rng);
+
+    const balances = evaluate(ops);
+    const plan = planFlight(ops, result.landed, rng, style);
+
+    const objects               = plan.hits.map((h, i) => ({
+        id: i, tick: h.tick, y: h.y, kind: ops[i], hit: true, balanceAfter: balances[i],
+    }));
+    objects.push(...scatterDecoys(plan, result.landed, rng, 1000));
+    objects.sort((a, b) => a.tick - b.tick);
+
+    const beats         = [{ tick: 0, type: 'TAKEOFF' }];
+    for (const o of objects) {
+        if (o.hit) {
+            beats.push({
+                tick: o.tick,
+                type: o.kind.kind === 'ROCKET' ? 'HIT_ROCKET'
+                    : o.kind.kind === 'BOOST' ? 'HIT_BOOST' : 'HIT_PICKUP',
+                payload: {
+                    balance: o.balanceAfter ,
+                    value: o.kind.kind === 'ROCKET' ? SYM.rocketDivisor : o.kind.value,
+                },
+                objId: o.id,
+            });
+        } else if (o.nearMiss) {
+            beats.push({ tick: o.tick, type: 'NEAR_MISS', objId: o.id });
+        }
+    }
+    beats.push({ tick: Math.max(1, plan.carrierTick - 16), type: 'ENDGAME_REVEAL' });
+    if (plan.ending === 'SLIDE_OFF') beats.push({ tick: plan.slideFrom, type: 'DECK_SLIDE' });
+    beats.push({ tick: plan.terminalTick, type: result.landed ? 'LAND' : 'SPLASH' });
+    beats.sort((a, b) => a.tick - b.tick);
+
+    const achieved = balances.length ? balances[balances.length - 1] : 1;
+
+    return {
+        roundId: result.roundId,
+        landed: result.landed,
+        totalTicks: Math.max(plan.carrierTick, plan.terminalTick) + PHYS.TAIL_TICKS,
+        carrierTick: plan.carrierTick,
+        terminalTick: plan.terminalTick,
+        frames: plan.frames,
+        objects,
+        beats,
+        finalBalance: result.landed ? achieved : 0,
+        peakBalance: balances.length ? Math.max(...balances) : 1,
+        peakAltitude: plan.peakAltitude,
+        riseWindows: plan.riseWindows,
+        ending: plan.ending,
+        slideFrom: plan.slideFrom,
+        exact,
+        style,
+    };
+}
+
+/** 連續時間取樣（60fps 渲染用,tick 是小數） */
+function sampleFrame(script                   , t        )        {
+    const f = script.frames;
+    const i = Math.max(0, Math.min(Math.floor(t), f.length - 1));
+    const j = Math.min(i + 1, f.length - 1);
+    const a = t - i;
+    return {
+        tick: t,
+        y: f[i].y + (f[j].y - f[i].y) * a,
+        vy: f[i].vy + (f[j].vy - f[i].vy) * a,
+        pitch: f[i].pitch + (f[j].pitch - f[i].pitch) * a,
+    };
+}
+
+// ══════════════════════════════════════════════════════════════
+//  5. 離線結果產生器
+//     線上版把這整段換成一次 HTTP request 即可,其餘程式碼一行都不用改。
+// ══════════════════════════════════════════════════════════════
+
+const OFFLINE = {
+    winChance: 0.5,
+    biasPower: 2.1,                 // 越大越偏小倍數
+    pool: [0.25, 0.5, 1, 1.5, 2, 2.5, 3, 4, 5, 6, 7.5, 8, 10, 12, 15, 20, 25, 40, 60, 80, 120, 250],
+};
+
+function configureOffline(p                         ) { Object.assign(OFFLINE, p); }
+
+let offlineSeq = 0;
+function offlineResult()              {
+    const rng = new Rng(`offline-${offlineSeq++}-${Date.now()}-${Math.random()}`);
+    const landed = rng.chance(OFFLINE.winChance);
+    const idx = Math.min(OFFLINE.pool.length - 1,
+        Math.floor(Math.pow(rng.next(), OFFLINE.biasPower) * OFFLINE.pool.length));
+    return {
+        roundId: `r${offlineSeq}-${rng.int(1e9)}`,
+        multiplier: landed ? OFFLINE.pool[idx] : 0,
+        landed,
+    };
+}
+
+
+/* ───────────────── 渲染與遊戲迴圈 ───────────────── */
+/* ============================================================
+ *  離線版渲染與遊戲迴圈（Canvas2D）
+ *
+ *  對應 assets/scripts/AviaView.ts + AviaGame.ts。
+ *  演算法不在這裡 —— 由 tools/genoffline.js 從 AviaPath.ts 原檔剝掉型別後注入，
+ *  所以航線邏輯永遠只有一份，不會漂移。
+ *
+ *  座標：設計解析度 1280×720，內部一律用「距畫面底部的高度」，
+ *  畫的時候才用 up() 翻成 canvas 的 y。
+ * ============================================================ */
+
+const DW = 1280, DH = 720;
+
+const CFG = {
+    waterScreenY: 110,
+    planeScreenXRatio: 0.34,
+    camFollowStart: 0.62,
+    camLag: 4,
+    rocketApproach: 55,
+    seaCarrierSpacing: 1500,
+    metersPerPx: 0.25,
+    distanceUnit: 'm',
+    trailLength: 26,
+    shakeIntensity: 14,
+    showDebugPath: false,
+
+    skyTop: '#2660a8', skyBottom: '#96d6ec', skyHigh: '#080e2e',
+    seaDeep: '#12467a', seaLight: '#1e6ca8', foam: 'rgba(220,246,255,0.75)',
+    planeBody: '#f2f6fc', planeAccent: '#e4543e',
+    pickup: '#5ce2c8', boost: '#ffca46', rocket: '#f04e4e',
+    carrier: '#7e8ea0',
+    hud: '#c4def4', accent: '#ffca46', text: '#ffffff',
+};
+
+const BET_OPTIONS = [0.1, 0.5, 1, 2, 5, 10, 25, 50, 100];
+const SPEED_KEYS = ['slow', 'medium', 'fast', 'ultra'];
+const SPEED_LABELS = ['慢', '中', '快', '極快'];
+
+// ── 小工具 ────────────────────────────────────────────────
+const up = v => DH - v;
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const lerp = (a, b, k) => a + (b - a) * k;
+const easeOutC = s => 1 - Math.pow(1 - s, 3);
+/* hash01() 由注入的 AviaPath 提供，這裡不重複定義（同一個 module scope 會撞名） */
+function hexRgb(h) {
+    return [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
+}
+function mixHex(a, b, k) {
+    const A = hexRgb(a), B = hexRgb(b);
+    return `rgb(${Math.round(lerp(A[0], B[0], k))},${Math.round(lerp(A[1], B[1], k))},${Math.round(lerp(A[2], B[2], k))})`;
+}
+function rgba(hex, a) { const c = hexRgb(hex); return `rgba(${c[0]},${c[1]},${c[2]},${a})`; }
+function fmtLen(v) { return v < 10 ? v.toFixed(1) : Math.round(v).toLocaleString('en-US'); }
+function fmtMul(v) { return v >= 100 ? v.toFixed(0) : v >= 10 ? v.toFixed(1) : v.toFixed(2); }
+function money(v) { return v.toFixed(2); }
+function trimNum(v) { return Number.isInteger(v) ? `${v}` : String(v); }
+
+// ── 畫布 ──────────────────────────────────────────────────
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+let scale = 1;
+
+function resize() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const wrap = document.getElementById('stage');
+    const w = wrap.clientWidth, h = wrap.clientHeight;
+    scale = Math.min(w / DW, h / DH);
+    canvas.width = Math.round(DW * scale * dpr);
+    canvas.height = Math.round(DH * scale * dpr);
+    canvas.style.width = Math.round(DW * scale) + 'px';
+    canvas.style.height = Math.round(DH * scale) + 'px';
+    ctx.setTransform(scale * dpr, 0, 0, scale * dpr, 0, 0);
+}
+window.addEventListener('resize', resize);
+
+// ── 遊戲狀態 ──────────────────────────────────────────────
+const S = {
+    state: 'IDLE',           // IDLE | PLAY | END
+    script: null,
+    t: 0, beatIdx: 0,
+    speed: 'medium',
+    balance: 1000, betIdx: 2,
+    lastWin: 0, info: '',
+    clock: 0, endTimer: 0,
+    camY: 0, shake: 0, sinking: 0,
+    shownBalance: 1, targetBalance: 1,
+    trail: [], fx: [], floats: [],
+    consumed: new Set(),      // 已被吃掉的物件 id
+    big: null,                // { text, color, t }
+    autoSpin: false,
+};
+
+const bet = () => BET_OPTIONS[S.betIdx];
+
+// ══════════════════════════════════════════════════════════
+//  繪製
+// ══════════════════════════════════════════════════════════
+
+function drawSky() {
+    const alt = clamp(S.camY / 900, 0, 1);
+    const top = mixHex(CFG.skyTop, CFG.skyHigh, alt);
+    const bot = mixHex(CFG.skyBottom, CFG.skyHigh, alt * 0.65);
+    const g = ctx.createLinearGradient(0, 0, 0, DH);
+    g.addColorStop(0, top); g.addColorStop(1, bot);
+    ctx.fillStyle = g; ctx.fillRect(0, 0, DW, DH);
+
+    // 太陽
+    const sy = up(DH * 0.80 - S.camY * 0.12);
+    ctx.fillStyle = 'rgba(255,236,190,0.16)';
+    ctx.beginPath(); ctx.arc(DW * 0.78, sy, 110, 0, 7); ctx.fill();
+    ctx.fillStyle = 'rgba(255,246,214,0.47)';
+    ctx.beginPath(); ctx.arc(DW * 0.78, sy, 58, 0, 7); ctx.fill();
+
+    // 高空星點
+    if (alt > 0.35) {
+        ctx.fillStyle = `rgba(255,255,255,${(alt - 0.35) / 0.65 * 0.67})`;
+        for (let i = 0; i < 40; i++) {
+            const x = ((i * 7919) % 1000) / 1000 * DW;
+            const y = ((i * 6151) % 1000) / 1000 * DH * 0.65;
+            ctx.beginPath(); ctx.arc(x, y, 1 + (i % 3) * 0.6, 0, 7); ctx.fill();
+        }
+    }
+}
+
+/** 航母。甲板面落在 PHYS.DECK_Y，所以飛機真的停在甲板上。 */
+function paintCarrier(cx, waterUp, s, haze, destination) {
+    const fade = hex => haze > 0 ? mixHex(hex, CFG.skyBottom, haze) : hex;
+    const base = CFG.carrier;
+    const dark = fade('#455666'), mid = fade('#63707f'), deck = fade(base);
+
+    const D = PHYS.DECK_Y * s, deckH = 20 * s, hullTop = D - deckH;
+    const X = v => cx + v * s;
+    const Y = v => up(waterUp + v);
+
+    ctx.beginPath();                                   // 船身
+    ctx.moveTo(X(-152), Y(hullTop)); ctx.lineTo(X(152), Y(hullTop));
+    ctx.lineTo(X(124), Y(-34 * s)); ctx.lineTo(X(-118), Y(-34 * s));
+    ctx.closePath(); ctx.fillStyle = dark; ctx.fill();
+
+    const bandH = Math.min(46 * s, hullTop * 0.45);    // 上半段亮一階
+    ctx.fillStyle = mid;
+    ctx.fillRect(X(-152), Y(hullTop), 304 * s, bandH);
+
+    if (s > 0.5) {                                     // 舷側開口
+        ctx.fillStyle = fade('#121a26');
+        for (let x = -120; x < 120; x += 42) ctx.fillRect(X(x), Y(hullTop - 34 * s), 22 * s, 12 * s);
+    }
+
+    ctx.fillStyle = deck;                              // 甲板
+    ctx.fillRect(X(-152), Y(D), 304 * s, deckH);
+    ctx.strokeStyle = `rgba(255,255,255,${0.37 * (1 - haze)})`;
+    ctx.lineWidth = 3 * s; ctx.beginPath();
+    for (let x = -134; x < 134; x += 34) {
+        ctx.moveTo(X(x), Y(hullTop + deckH / 2)); ctx.lineTo(X(x + 18), Y(hullTop + deckH / 2));
+    }
+    ctx.stroke();
+
+    const ix = destination ? 64 : -120;                // 艦島
+    ctx.fillStyle = dark; ctx.fillRect(X(ix), Y(D + 46 * s), 48 * s, 46 * s);
+    ctx.fillStyle = fade('#ffd25a'); ctx.fillRect(X(ix + 8), Y(D + 34 * s), 32 * s, 8 * s);
+    ctx.strokeStyle = dark; ctx.lineWidth = 3 * s;
+    ctx.beginPath(); ctx.moveTo(X(ix + 24), Y(D + 46 * s)); ctx.lineTo(X(ix + 24), Y(D + 74 * s)); ctx.stroke();
+
+    if (destination) {                                 // 降落導引燈
+        ctx.fillStyle = 'rgba(120,255,180,0.86)';
+        for (let x = -140; x < 40; x += 30) { ctx.beginPath(); ctx.arc(X(x), Y(D + 6 * s), 4 * s, 0, 7); ctx.fill(); }
+    }
+    ctx.strokeStyle = CFG.foam; ctx.lineWidth = 4 * s; // 吃水線
+    ctx.beginPath(); ctx.moveTo(X(-160), Y(2 * s)); ctx.lineTo(X(160), Y(2 * s)); ctx.stroke();
+}
+
+/** 海面上持續出現的航母 —— 跟目的艦長得一模一樣，同速捲動 */
+function drawSeaCarriers(scroll) {
+    if (SEA.SPACING <= 0) return;
+    const W = SEA.HALF_W * 2, gap = SEA.SPACING;
+    const endX = (S.script ? S.script.carrierTick : 30) * PHYS.PX_PER_TICK;
+    const i0 = Math.floor((-scroll - DW * 0.4) / gap) - 1;
+    const i1 = Math.ceil((-scroll + DW * 1.4) / gap) + 1;
+    for (let i = i0; i <= i1; i++) {
+        // 位置由演算法那份 seaCarrierX() 決定，兩邊必須一致
+        const wx = seaCarrierX(i);
+        if (Math.abs(wx) < W || Math.abs(wx - endX) < W) continue;
+        const x = wx + scroll;
+        if (x < -W || x > DW + W) continue;
+        paintCarrier(x, CFG.waterScreenY - S.camY, 1, 0, true);
+    }
+}
+
+function drawSea(scroll) {
+    const layers = [
+        { dy: 26, amp: 7, len: 260, par: 0.25, spd: 0.5, col: CFG.seaLight },
+        { dy: 6, amp: 11, len: 170, par: 0.6, spd: 0.9, col: CFG.seaDeep },
+    ];
+    for (const L of layers) {
+        const top = CFG.waterScreenY + L.dy - S.camY;
+        ctx.beginPath(); ctx.moveTo(0, DH);
+        for (let x = 0; x <= DW; x += 8) {
+            const p = (x - scroll * L.par) / L.len + S.clock * L.spd;
+            ctx.lineTo(x, up(top + Math.sin(p) * L.amp + Math.sin(p * 2.3) * L.amp * 0.35));
+        }
+        ctx.lineTo(DW, DH); ctx.closePath();
+        ctx.fillStyle = L.col; ctx.fill();
+    }
+    ctx.strokeStyle = CFG.foam; ctx.lineWidth = 2; ctx.beginPath();
+    const top = CFG.waterScreenY + 6 - S.camY;
+    for (let x = 0; x <= DW; x += 8) {
+        const p = (x - scroll * 0.6) / 170 + S.clock * 0.9;
+        const y = up(top + Math.sin(p) * 11 + Math.sin(p * 2.3) * 3.85);
+        x === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+}
+
+function drawPlane(x, yUp, pitch) {
+    ctx.save();
+    ctx.translate(x, up(yUp));
+    ctx.rotate(-pitch);
+    const P = new Path2D();
+    P.moveTo(38, 0); P.lineTo(6, -12); P.lineTo(-32, -9); P.lineTo(-36, 6); P.lineTo(6, 10);
+    P.closePath();
+    ctx.fillStyle = CFG.planeBody; ctx.fill(P);
+    ctx.fillStyle = CFG.planeAccent;
+    ctx.beginPath(); ctx.moveTo(6, -2); ctx.lineTo(-16, 22); ctx.lineTo(-2, 22); ctx.lineTo(14, 1);
+    ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(6, -2); ctx.lineTo(-14, -20); ctx.lineTo(0, -20); ctx.lineTo(14, -3);
+    ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(-30, -6); ctx.lineTo(-40, -26); ctx.lineTo(-24, -12);
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle = 'rgba(150,225,255,0.92)';
+    ctx.beginPath(); ctx.arc(12, -6, 7, 0, 7); ctx.fill();
+    ctx.restore();
+}
+
+function drawObject(o, x, yUp) {
+    const y = up(yUp);
+    if (o.kind.kind === 'ROCKET') {
+        ctx.fillStyle = rgba(CFG.rocket, 0.27);
+        ctx.beginPath(); ctx.arc(x, y, 34, 0, 7); ctx.fill();
+        ctx.fillStyle = CFG.rocket;                       // 機首朝左
+        ctx.beginPath(); ctx.moveTo(x - 26, y); ctx.lineTo(x - 2, y - 11); ctx.lineTo(x + 22, y - 8);
+        ctx.lineTo(x + 22, y + 8); ctx.lineTo(x - 2, y + 11); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = '#a82828';
+        ctx.beginPath(); ctx.moveTo(x + 22, y - 8); ctx.lineTo(x + 30, y - 18); ctx.lineTo(x + 30, y - 2); ctx.closePath(); ctx.fill();
+        ctx.beginPath(); ctx.moveTo(x + 22, y + 8); ctx.lineTo(x + 30, y + 18); ctx.lineTo(x + 30, y + 2); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = '#ffdc78';                        // 尾焰在右
+        ctx.beginPath(); ctx.moveTo(x + 24, y - 6); ctx.lineTo(x + 46, y); ctx.lineTo(x + 24, y + 6); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = 'rgba(255,150,60,0.75)';
+        ctx.beginPath(); ctx.moveTo(x + 30, y - 4); ctx.lineTo(x + 62, y); ctx.lineTo(x + 30, y + 4); ctx.closePath(); ctx.fill();
+        return;
+    }
+    const boost = o.kind.kind === 'BOOST';
+    const col = boost ? CFG.boost : CFG.pickup;
+    ctx.fillStyle = rgba(col, 0.22);
+    ctx.beginPath(); ctx.arc(x, y, 36, 0, 7); ctx.fill();
+    ctx.fillStyle = col; ctx.beginPath();
+    if (boost) {
+        for (let i = 0; i < 6; i++) {
+            const a = Math.PI / 3 * i - Math.PI / 6;
+            const px = x + Math.cos(a) * 28, py = y + Math.sin(a) * 28;
+            i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+        }
+        ctx.closePath();
+    } else ctx.arc(x, y, 26, 0, 7);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.82)'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(x, y, boost ? 30 : 27, 0, 7); ctx.stroke();
+
+    ctx.fillStyle = '#141f30';
+    ctx.font = 'bold 26px system-ui,sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(boost ? `×${o.kind.value}` : `+${o.kind.value}`, x, y + 1);
+}
+
+/** 軌跡點存的是「世界座標」，畫的時候才套用捲動與鏡頭 —— 不會累積誤差 */
+function drawTrail(scroll) {
+    if (S.trail.length < 2) return;
+    const sx = p => p.wx + scroll;
+    const sy = p => up(CFG.waterScreenY + p.wy - S.camY);
+    for (let i = 1; i < S.trail.length; i++) {
+        const a = i / S.trail.length;
+        ctx.strokeStyle = `rgba(255,255,255,${a * a * 0.67})`;
+        ctx.lineWidth = 2 + a * 9;
+        ctx.beginPath();
+        ctx.moveTo(sx(S.trail[i - 1]), sy(S.trail[i - 1]));
+        ctx.lineTo(sx(S.trail[i]), sy(S.trail[i]));
+        ctx.stroke();
+    }
+}
+
+function drawHud(frame) {
+    const s = S.script;
+    const bar = (x, yUp, w, p, col) => {
+        ctx.fillStyle = 'rgba(255,255,255,0.13)';
+        ctx.fillRect(x, up(yUp + 10), w, 10);
+        ctx.fillStyle = col;
+        ctx.fillRect(x, up(yUp + 10), Math.max(6, w * clamp(p, 0, 1)), 10);
+    };
+    const dist = clamp(S.t / Math.max(1, s.carrierTick), 0, 1);
+    const alt = clamp(frame.y / PHYS.ALT_DISPLAY_MAX, 0, 1);
+    bar(150, DH - 47, 210, dist, CFG.accent);
+    bar(150, DH - 81, 210, alt, CFG.hud);
+
+    const u = CFG.metersPerPx, un = CFG.distanceUnit;
+    ctx.font = '20px system-ui,sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = CFG.hud;
+    ctx.fillText(`距離 ${fmtLen(S.t * PHYS.PX_PER_TICK * u)} / ${fmtLen(s.carrierTick * PHYS.PX_PER_TICK * u)} ${un}`, 36, up(DH - 42));
+    ctx.fillText(`高度 ${fmtLen(frame.y * u)} ${un}`, 36, up(DH - 76));
+
+    ctx.font = 'bold 40px system-ui,sans-serif'; ctx.textAlign = 'center';
+    ctx.fillStyle = S.targetBalance >= 20 ? CFG.accent : CFG.text;
+    ctx.fillText(`${fmtMul(S.shownBalance)}×`, DW / 2, up(DH - 56));
+}
+
+// ── 特效 ──────────────────────────────────────────────────
+function pushFx(kind, x, yUp, dur, r0, r1, col) {
+    S.fx.push({ kind, x, y: yUp, t: 0, dur, r0, r1, col, seed: Math.random() * 100 });
+}
+function drawFx(dt) {
+    for (let i = S.fx.length - 1; i >= 0; i--) {
+        const f = S.fx[i]; f.t += dt;
+        const p = f.t / f.dur;
+        if (p >= 1) { S.fx.splice(i, 1); continue; }
+        const a = 1 - p, r = f.r0 + (f.r1 - f.r0) * easeOutC(p);
+        const y = up(f.y - S.camY);
+        if (f.kind === 'RING') {
+            ctx.strokeStyle = rgba(f.col, a); ctx.lineWidth = 6 * a + 1;
+            ctx.beginPath(); ctx.arc(f.x, y, r, 0, 7); ctx.stroke();
+        } else if (f.kind === 'FLASH') {
+            ctx.fillStyle = rgba(f.col, a * 0.55);
+            ctx.beginPath(); ctx.arc(f.x, y, r, 0, 7); ctx.fill();
+        } else if (f.kind === 'SPRAY') {
+            ctx.strokeStyle = rgba(f.col, a); ctx.lineWidth = 3; ctx.beginPath();
+            for (let k = 0; k < 12; k++) {
+                const ang = k / 12 * Math.PI * 2 + f.seed;
+                const rr = r * (0.55 + ((k * 37 + f.seed) % 10) / 18);
+                ctx.moveTo(f.x + Math.cos(ang) * rr * 0.35, y + Math.sin(ang) * rr * 0.35);
+                ctx.lineTo(f.x + Math.cos(ang) * rr, y + Math.sin(ang) * rr);
+            }
+            ctx.stroke();
+        } else if (f.kind === 'SMOKE') {
+            for (let k = 0; k < 5; k++) {
+                ctx.fillStyle = rgba(f.col, a * (0.16 + k * 0.05));
+                ctx.beginPath();
+                ctx.arc(f.x - k * r * 0.45, y + Math.sin(k + f.seed) * 8, r * (0.5 + k * 0.16), 0, 7);
+                ctx.fill();
+            }
+        }
+    }
+}
+function floatText(x, yUp, txt, col, size) {
+    S.floats.push({ x, y: yUp, txt, col, size, t: 0 });
+}
+function drawFloats(dt) {
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    for (let i = S.floats.length - 1; i >= 0; i--) {
+        const f = S.floats[i]; f.t += dt;
+        if (f.t > 0.8) { S.floats.splice(i, 1); continue; }
+        const k = f.t / 0.8;
+        ctx.globalAlpha = k < 0.4 ? 1 : 1 - (k - 0.4) / 0.6;
+        ctx.fillStyle = f.col;
+        ctx.font = `bold ${f.size}px system-ui,sans-serif`;
+        ctx.fillText(f.txt, f.x, up(f.y - S.camY + 92 * easeOutC(k)));
+        ctx.globalAlpha = 1;
+    }
+}
+
+// ══════════════════════════════════════════════════════════
+//  演出節拍
+// ══════════════════════════════════════════════════════════
+
+function onBeat(b) {
+    const s = S.script;
+    const px = DW * CFG.planeScreenXRatio;
+    const obj = s.objects.find(o => o.id === b.objId);
+    const oy = obj ? CFG.waterScreenY + obj.y : CFG.waterScreenY + 200;
+
+    switch (b.type) {
+        case 'TAKEOFF':
+            pushFx('SMOKE', px - 60, CFG.waterScreenY + PHYS.DECK_Y, 0.6, 20, 90, '#ffffff');
+            break;
+        case 'HIT_PICKUP':
+        case 'HIT_BOOST': {
+            const boost = b.type === 'HIT_BOOST';
+            S.targetBalance = b.payload.balance;
+            S.consumed.add(b.objId);
+            pushFx('RING', px, oy, 0.42, 20, boost ? 120 : 78, boost ? CFG.boost : CFG.pickup);
+            floatText(px, oy + 20, boost ? `×${b.payload.value}` : `+${b.payload.value}`,
+                boost ? CFG.boost : CFG.pickup, boost ? 52 : 40);
+            if (boost) S.shake = Math.max(S.shake, 0.45);
+            break;
+        }
+        case 'HIT_ROCKET':
+            S.targetBalance = b.payload.balance;
+            S.consumed.add(b.objId);
+            pushFx('FLASH', px, oy, 0.3, 30, 150, CFG.rocket);
+            pushFx('SPRAY', px, oy, 0.55, 10, 130, CFG.rocket);
+            floatText(px, oy + 16, '÷2', CFG.rocket, 50);
+            S.shake = 1;
+            break;
+        case 'LAND': {
+            pushFx('SMOKE', px, CFG.waterScreenY + PHYS.DECK_Y, 0.9, 18, 130, '#ffffff');
+            S.shake = 0.8;
+            const m = s.finalBalance;
+            S.big = {
+                text: m >= 80 ? 'SUPER MEGA WIN' : m >= 40 ? 'MEGA WIN' : m >= 20 ? 'BIG WIN' : 'LAND!',
+                color: m >= 20 ? CFG.accent : CFG.text, t: 0,
+            };
+            S.lastWin = bet() * m;
+            S.balance += S.lastWin;
+            syncUi();
+            break;
+        }
+        case 'DECK_SLIDE':
+            // 該墜海卻剛好撞上一艘航母 —— 觸艦、擦出火花、開始滑行
+            pushFx('SMOKE', px, CFG.waterScreenY + PHYS.DECK_Y, 1.1, 14, 120, '#ffffff');
+            pushFx('SPRAY', px, CFG.waterScreenY + PHYS.DECK_Y, 0.5, 8, 90, '#ffd678');
+            S.shake = 0.9;
+            S.big = { text: '停在艦上了…', color: CFG.text, t: 0 };
+            break;
+
+        case 'SPLASH':
+            S.sinking = 1; S.shake = 1; S.targetBalance = 0;
+            pushFx('RING', px, CFG.waterScreenY + 8, 0.8, 14, 190, '#dcf6ff');
+            pushFx('SPRAY', px, CFG.waterScreenY + 10, 0.9, 8, 210, '#dcf6ff');
+            S.big = { text: 'SPLASH', color: '#ff7878', t: 0 };
+            S.info = `差一點 —— 最高曾到 ${s.peakBalance.toFixed(2)}×`;
+            S.lastWin = 0;
+            syncUi();
+            break;
+    }
+}
+
+// ══════════════════════════════════════════════════════════
+//  主迴圈
+// ══════════════════════════════════════════════════════════
+
+function idleFrame(clock) {
+    return { tick: 0, y: PHYS.DECK_Y + 18 + Math.sin(clock * 2) * 4, vy: 0, pitch: Math.sin(clock * 1.3) * 0.035 };
+}
+
+function spin() {
+    if (S.state !== 'IDLE') return;
+    let b = bet();
+    if (S.balance < b) {
+        const best = BET_OPTIONS.filter(v => v <= S.balance).pop();
+        if (best === undefined) { S.info = '餘額不足'; syncUi(); return; }
+        S.betIdx = BET_OPTIONS.indexOf(best); b = best;
+    }
+    S.balance -= b;
+    S.lastWin = 0; S.info = '';
+    S.script = buildPerformance(offlineResult());
+    S.t = 0; S.beatIdx = 0; S.state = 'PLAY';
+    S.camY = 0; S.sinking = 0; S.shake = 0;
+    S.trail.length = 0; S.fx.length = 0; S.floats.length = 0;
+    S.consumed.clear(); S.big = null;
+    S.shownBalance = 1; S.targetBalance = 1;
+    syncUi();
+}
+
+let last = performance.now();
+function frame(now) {
+    const dt = Math.min((now - last) / 1000, 0.05);
+    last = now; S.clock += dt;
+
+    if (S.state === 'IDLE') {
+        render(dt, 0, idleFrame(S.clock), false);
+    } else {
+        const s = S.script, ms = TICK_MS[S.speed];
+        if (S.state === 'PLAY') {
+            S.t = Math.min(S.t + dt * 1000 / ms, s.totalTicks);
+            while (S.beatIdx < s.beats.length && s.beats[S.beatIdx].tick <= S.t) onBeat(s.beats[S.beatIdx++]);
+            if (S.t >= s.terminalTick) { S.state = 'END'; S.endTimer = 0; }
+        } else {
+            S.endTimer += dt;
+            if (S.endTimer >= 1.8) {
+                S.state = 'IDLE'; S.script = null; S.camY = 0; S.sinking = 0;
+                S.consumed.clear(); S.big = null; syncUi();
+                if (S.autoSpin) setTimeout(spin, 400);
+                requestAnimationFrame(frame); return;
+            }
+        }
+        const tt = Math.min(S.t, s.terminalTick);
+        render(dt, tt, sampleFrame(s, tt), true);
+    }
+    requestAnimationFrame(frame);
+}
+
+function render(dt, t, fr, playing) {
+    const s = S.script;
+    const planeX = t * PHYS.PX_PER_TICK;
+    const scroll = DW * CFG.planeScreenXRatio - planeX;
+
+    if (S.sinking > 0) S.sinking += dt * 46;
+    const planeUpAbs = CFG.waterScreenY + fr.y - S.sinking;
+
+    // 垂直鏡頭：超過畫面高度的 camFollowStart 就往上跟，沒有上限
+    const target = Math.max(0, planeUpAbs - DH * CFG.camFollowStart);
+    S.camY += (target - S.camY) * Math.min(1, dt * CFG.camLag);
+
+    ctx.save();
+    if (S.shake > 0) {
+        S.shake = Math.max(0, S.shake - dt * 3.2);
+        const k = S.shake * CFG.shakeIntensity;
+        ctx.translate((Math.random() - 0.5) * k, (Math.random() - 0.5) * k);
+    }
+
+    drawSky();
+    drawSeaCarriers(scroll);
+
+    // 起飛艦與目的艦
+    paintCarrier(scroll, CFG.waterScreenY - S.camY, 1, 0, false);
+    paintCarrier((s ? s.carrierTick : 30) * PHYS.PX_PER_TICK + scroll, CFG.waterScreenY - S.camY, 1, 0, true);
+
+    if (s && CFG.showDebugPath) {
+        ctx.strokeStyle = 'rgba(255,255,255,0.25)'; ctx.lineWidth = 2; ctx.beginPath();
+        for (let i = 0; i <= s.terminalTick; i++) {
+            const x = i * PHYS.PX_PER_TICK + scroll, y = up(CFG.waterScreenY + s.frames[i].y - S.camY);
+            i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+    }
+
+    // 物件（飛彈額外往左飛）
+    if (s) {
+        for (const o of s.objects) {
+            if (S.consumed.has(o.id)) continue;
+            let x = o.tick * PHYS.PX_PER_TICK + scroll;
+            if (o.kind.kind === 'ROCKET') x += Math.min((o.tick - t) * CFG.rocketApproach, DW * 1.4);
+            if (x < -120 || x > DW + 120) continue;
+            drawObject(o, x, CFG.waterScreenY + o.y - S.camY);
+        }
+    }
+
+    if (playing) {
+        S.trail.push({ wx: planeX - 30, wy: fr.y - S.sinking - 2 });
+        while (S.trail.length > CFG.trailLength) S.trail.shift();
+        drawTrail(scroll);
+    }
+
+    drawSea(scroll);
+    drawFx(dt);
+
+    drawPlane(DW * CFG.planeScreenXRatio, planeUpAbs - S.camY,
+        fr.pitch + (S.sinking > 0 ? -S.sinking * 0.006 : 0));
+
+    if (playing) {                                     // Counter Balance 跟著飛機
+        S.shownBalance += (S.targetBalance - S.shownBalance) * Math.min(1, dt * 12);
+        ctx.font = 'bold 30px system-ui,sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillStyle = CFG.text;
+        ctx.fillText(`${fmtMul(S.shownBalance)}×`, DW * CFG.planeScreenXRatio, up(planeUpAbs - S.camY + 58));
+    }
+
+    drawFloats(dt);
+    if (playing && s) drawHud(fr);
+
+    if (S.big) {                                       // 大字
+        S.big.t += dt;
+        const k = Math.min(1, S.big.t / 0.28);
+        const sc = k < 1 ? 0.3 + 0.9 * easeOutC(k) : 1;
+        ctx.save();
+        ctx.translate(DW / 2, up(DH * 0.62)); ctx.scale(sc, sc);
+        ctx.font = 'bold 96px system-ui,sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.lineWidth = 8; ctx.strokeStyle = 'rgba(0,0,0,0.35)'; ctx.strokeText(S.big.text, 0, 0);
+        ctx.fillStyle = S.big.color; ctx.fillText(S.big.text, 0, 0);
+        ctx.restore();
+    }
+    ctx.restore();
+}
+
+// ══════════════════════════════════════════════════════════
+//  UI（HTML，不畫在 canvas 上）
+// ══════════════════════════════════════════════════════════
+
+let elChips, elSpin, elSpeeds, elBalance, elBet, elWin, elInfo;
+
+function buildUi() {
+    const ui = document.getElementById('ui');
+    ui.innerHTML = `
+      <div class="row top">
+        <div><b id="bal"></b><span id="betl"></span></div>
+        <div id="win"></div>
+      </div>
+      <div class="row bottom">
+        <div id="chips"></div>
+        <div class="right">
+          <div id="speeds"></div>
+          <button id="spin">SPIN</button>
+        </div>
+      </div>
+      <div id="info"></div>`;
+
+    elChips = document.getElementById('chips');
+    elSpeeds = document.getElementById('speeds');
+    elSpin = document.getElementById('spin');
+    elBalance = document.getElementById('bal');
+    elBet = document.getElementById('betl');
+    elWin = document.getElementById('win');
+    elInfo = document.getElementById('info');
+
+    BET_OPTIONS.forEach((v, i) => {
+        const b = document.createElement('button');
+        b.className = 'chip'; b.textContent = '$' + trimNum(v);
+        b.onclick = () => { if (S.state === 'IDLE') { S.betIdx = i; syncUi(); } };
+        elChips.appendChild(b);
+    });
+    SPEED_LABELS.forEach((s, i) => {
+        const b = document.createElement('button');
+        b.className = 'sp'; b.textContent = s;
+        b.onclick = () => { S.speed = SPEED_KEYS[i]; syncUi(); };
+        elSpeeds.appendChild(b);
+    });
+    elSpin.onclick = spin;
+
+    addEventListener('keydown', e => {
+        if (e.code === 'Space') { e.preventDefault(); spin(); }
+        if (e.code === 'KeyA') { S.autoSpin = !S.autoSpin; syncUi(); if (S.autoSpin) spin(); }
+    });
+    syncUi();
+}
+
+function syncUi() {
+    const idle = S.state === 'IDLE';
+    [...elChips.children].forEach((c, i) => {
+        c.classList.toggle('on', i === S.betIdx);
+        c.disabled = !idle;
+    });
+    [...elSpeeds.children].forEach((c, i) => c.classList.toggle('on', SPEED_KEYS[i] === S.speed));
+    elSpin.disabled = !idle;
+    elSpin.textContent = idle ? (S.autoSpin ? 'AUTO' : 'SPIN') : '飛行中';
+    elBalance.textContent = `餘額 $${money(S.balance)}`;
+    elBet.textContent = `　下注 $${trimNum(bet())}`;
+    elWin.textContent = S.lastWin > 0 ? `贏 $${money(S.lastWin)}` : '';
+    elInfo.textContent = S.info;
+}
+
+// ── 啟動 ──────────────────────────────────────────────────
+buildUi();
+resize();
+requestAnimationFrame(frame);
+
+</script>
+</body>
+</html>
