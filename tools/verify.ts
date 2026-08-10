@@ -73,13 +73,24 @@ for (const m of POOL) {
         if (sc.frames.length !== sc.terminalTick + 1) {
             console.error(`✗ ${m}× seed${s} frames 長度與終點不符`); fail++;
         }
-        // 等高階梯：所有命中點之間的高度差必須是同一個值（觸底除外）
+        // 等高階梯：每個物件的淨變化必須 = ±STEP − GLIDE_DROP（觸底除外）
         for (let i = 1; i < hits.length; i++) {
             const d = hits[i].y - hits[i - 1].y;
-            const expect = hits[i - 1].kind.kind === 'ROCKET' ? -PHYS.STEP_DOWN : PHYS.STEP_UP;
-            const floored = Math.abs(hits[i].y - PHYS.MIN_ALT) < 1e-6;
+            const step = hits[i - 1].kind.kind === 'ROCKET' ? -PHYS.STEP_DOWN : PHYS.STEP_UP;
+            const expect = step - PHYS.GLIDE_DROP;
+            const floored = Math.abs(hits[i].y - PHYS.MIN_ALT) < 1
+                || Math.abs(hits[i - 1].y - PHYS.MIN_ALT) < 1;
             if (Math.abs(d - expect) > 1e-6 && !floored) {
-                console.error(`✗ ${m}× seed${s} 第 ${i} 階高度差 ${d.toFixed(1)} ≠ ${expect}`); fail++; break;
+                console.error(`✗ ${m}× seed${s} 第 ${i} 階淨變化 ${d.toFixed(1)} ≠ ${expect}`); fail++; break;
+            }
+        }
+        // 飛行規則：除了起飛爬升與命中 +N/×N 的表演,航線任何時刻都必須下降
+        const inRise = (t: number) => sc.riseWindows.some(w => t >= w.from && t < w.to);
+        for (let t = 0; t < sc.terminalTick; t++) {
+            if (sc.frames[t + 1].y > sc.frames[t].y + 1e-9 && !inRise(t)) {
+                console.error(`✗ ${m}× seed${s} @${t} 在非命中時段上升 ` +
+                    `(${sc.frames[t].y.toFixed(1)} → ${sc.frames[t + 1].y.toFixed(1)})`);
+                fail++; break;
             }
         }
         // 命中物件必須真的在航線上

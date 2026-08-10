@@ -52,9 +52,9 @@ export interface Beat {
 
 /**
  * 每局隨機化的手感縮放。只影響觀感,不影響結果。
- * 注意這裡「沒有」升降幅度的縮放 —— 階梯高度是固定常數,永遠等高。
+ * 注意這裡「沒有」升降幅度的縮放 —— 升降幅度是固定常數,永遠等高。
  */
-export interface Style { gap: number; sag: number; }
+export interface Style { gap: number; }
 
 export interface PerformanceScript {
     roundId: string;
@@ -68,6 +68,8 @@ export interface PerformanceScript {
     finalBalance: number;   // 實際派彩倍數（落海 = 0）
     peakBalance: number;    // 畫面上曾出現的最高值
     peakAltitude: number;   // 本局最高點（給鏡頭/背景做高空效果用）
+    /** 允許上升的區間（起飛爬升 + 命中 +N/×N 的表演）。其餘時間航線一律下降。 */
+    riseWindows: { from: number; to: number }[];
     exact: boolean;         // false = 符號組合湊不出目標倍數,已退回近似值
     style: Style;
 }
@@ -118,33 +120,31 @@ export function configureSymbols(p: Partial<SymbolConfig>) {
 export const PHYS = {
     WATER_Y: 0,
     DECK_Y: 130,            // 航母甲板高度
-    FLOOR_Y: 62,            // 航線下限。編排階段就保證不低於這裡 → 不可能中途墜海
+    DECOY_MIN_Y: 24,        // 誘餌可放置的最低高度
     ALT_DISPLAY_MAX: 420,   // HUD 高度條的參考值（純顯示。高度本身沒有上限）
     HIT_RADIUS: 46,
     PX_PER_TICK: 40,
     PITCH_RUN: 34,          // 算俯仰角用的水平參考量,越小抬頭越誇張
     PITCH_MAX_DEG: 42,      // 俯仰角上限,避免降落段機頭插到底
 
-    // ── 等高階梯 ──
-    //    吃到任何 +N 或 ×N,航線一律抬高 STEP_UP;吃到火箭一律壓低 STEP_DOWN。
-    //    與數字大小無關、與當前高度無關 —— 每一階都一樣高。
-    STEP_UP: 34,
-    STEP_DOWN: 34,
+    // ── 飛行規則（每一段的形狀都由這三個數字決定）──
+    //   1. 平飛 = 拋物線下降,每段固定掉 GLIDE_DROP
+    //   2. 只有吃到 +N / ×N 才會上升,一律抬高 STEP_UP（與數字大小、當前高度無關）
+    //   3. 只有吃到火箭才會有額外下降表演,一律壓低 STEP_DOWN
+    //   → 每個物件的淨變化 = ±STEP − GLIDE_DROP,全局一致
+    STEP_UP: 46,
+    STEP_DOWN: 46,
+    GLIDE_DROP: 22,         // 每個段落拋物線下降多少 px
+    RISE_TICKS: 4,          // 升／降表演持續幾 tick（其餘時間都在拋物線下降）
     TAKEOFF_STEPS: 2,       // 第一個物件放在甲板上方幾階
-    MIN_ALT: 130,           // 航線最低只能降到這裡（= 甲板高度）,再低就沒有下一階了
-
-    // ── 命中瞬間的短暫彈起（只是回饋,不改變階梯高度）──
-    POP_UP: 11,
-    POP_DOWN: -13,
-    POP_TICKS: 3,
+    MIN_ALT: 130,           // 航線最低只能降到這裡（= 甲板高度）
 
     // ── 段落形狀 ──
     BASE_GAP: 9,            // 物件間距（tick）。調小 → 場上物件更多更密
     GAP_JITTER: 0.35,
-    MIN_GAP: 5,
+    MIN_GAP: 6,
     MAX_GAP: 22,
-    SAG: 26,                // 兩物件之間航線下垂多少 px（滑翔感的來源）
-    TAKEOFF_TICKS: 8,
+    TAKEOFF_TICKS: 10,
 
     // ── 收尾 ──
     LAND_RATE: 9,           // 降落段每 tick 下降 px
@@ -172,13 +172,12 @@ export const PHYS = {
 export function configurePhys(p: Partial<typeof PHYS>) { Object.assign(PHYS, p); }
 
 export const STYLE_RANGE = {
-    gapMin: 0.85, gapMax: 1.20,     // 間距縮放
-    sagMin: 0.75, sagMax: 1.30,     // 下垂縮放
+    gapMin: 0.85, gapMax: 1.20,     // 間距縮放（唯一的每局隨機項,升降幅度永遠固定）
 };
 
 export function configureStyle(p: Partial<typeof STYLE_RANGE>) { Object.assign(STYLE_RANGE, p); }
 
-export const TICK_MS = { slow: 200, medium: 120, fast: 70, ultra: 32 };
+export const TICK_MS = { slow: 140, medium: 82, fast: 50, ultra: 24 };
 export type Speed = keyof typeof TICK_MS;
 
 export function configureTickMs(p: Partial<typeof TICK_MS>) { Object.assign(TICK_MS, p); }
@@ -354,40 +353,27 @@ function teaserOps(rng: Rng): ObjKind[] {
 }
 
 // ══════════════════════════════════════════════════════════════
-//  2. 航線編排（沒有物理）
+//  2. 航線編排（沒有物理,全部是解析式段落）
 //
-//  作法：
-//    ① 依序給每個物件一個 tick 與一個高度。高度是「上一個高度 ± 一個固定階距」,
-//       所有 +N / ×N 抬同一階,所有火箭降同一階,與數字大小、當前高度都無關。
-//       下限箝在 MIN_ALT,上方預設不封頂（MAX_ALT = 0）。
-//    ② 每個物件後面補一個「彈起」關鍵影格（短暫回饋）,
-//       兩個物件之間補一個「下垂」關鍵影格（滑翔感）。
-//    ③ 整串關鍵影格用 Catmull-Rom 取樣成逐 tick 曲線。
+//  飛行規則：
+//    ① 平飛 = 拋物線下降。每個段落固定掉 GLIDE_DROP,曲線 y = peak − drop·s²
+//       （s² 讓它由緩到急,就是拋物線的下半段）
+//    ② 只有吃到 +N / ×N 才會上升,一律抬 STEP_UP,持續 RISE_TICKS
+//    ③ 只有吃到火箭才會有額外下降表演,一律壓 STEP_DOWN,持續 RISE_TICKS
+//    ④ 除了上面兩種表演與起飛爬升,航線任何時刻都在下降
 //
-//  好處：
-//    · 航線形狀完全由參數決定,不會有物理跑飛 / 貼天花板 / 意外墜海
-//    · 下垂量會依「離下限還有多少空間」自動收斂 → 中途觸水在數學上不可能發生
-//    · 局長可預測,超長時只要縮 gap 重排即可
+//  每個物件的淨變化 = ±STEP − GLIDE_DROP,全局一致。
+//  段落是逐 tick 直接算出來的,不經過樣條,所以不會有 overshoot 造成的意外上升。
 // ══════════════════════════════════════════════════════════════
 
-/** 等高階梯：所有 +N / ×N 一律 +STEP_UP,火箭一律 -STEP_DOWN。與數字大小、當前高度都無關。 */
+/** 升／降表演的幅度。所有 +N / ×N 一律 +STEP_UP,所有火箭一律 −STEP_DOWN。 */
 function stepFor(op: ObjKind): number {
     return op.kind === 'ROCKET' ? -PHYS.STEP_DOWN : PHYS.STEP_UP;
 }
 
-function popFor(op: ObjKind): number {
-    return op.kind === 'ROCKET' ? PHYS.POP_DOWN : PHYS.POP_UP;
-}
-
 export function rollStyle(rng: Rng): Style {
-    const R = STYLE_RANGE;
-    return {
-        gap: rng.range(R.gapMin, R.gapMax),
-        sag: rng.range(R.sagMin, R.sagMax),
-    };
+    return { gap: rng.range(STYLE_RANGE.gapMin, STYLE_RANGE.gapMax) };
 }
-
-interface Key { t: number; y: number; }
 
 interface FlightPlan {
     frames: Frame[];
@@ -395,67 +381,17 @@ interface FlightPlan {
     terminalTick: number;
     carrierTick: number;
     peakAltitude: number;
+    riseWindows: { from: number; to: number }[];   // 允許上升的區間（起飛 + 命中表演）
 }
 
-function catmull(a: number, b: number, c: number, d: number, s: number) {
-    const s2 = s * s, s3 = s2 * s;
-    return 0.5 * (2 * b + (-a + c) * s + (2 * a - 5 * b + 4 * c - d) * s2 + (-a + 3 * b - 3 * c + d) * s3);
-}
-
-function sampleKeys(keys: Key[], total: number): number[] {
-    const out = new Array<number>(total + 1);
-    let seg = 0;
-    for (let t = 0; t <= total; t++) {
-        while (seg < keys.length - 2 && t >= keys[seg + 1].t) seg++;
-        const p1 = keys[seg];
-        const p2 = keys[Math.min(seg + 1, keys.length - 1)];
-        const p0 = keys[Math.max(seg - 1, 0)];
-        const p3 = keys[Math.min(seg + 2, keys.length - 1)];
-        const span = Math.max(1, p2.t - p1.t);
-        const s = Math.min(1, Math.max(0, (t - p1.t) / span));
-        out[t] = catmull(p0.y, p1.y, p2.y, p3.y, s);
-    }
-    return out;
-}
+const easeOut = (s: number) => 1 - (1 - s) * (1 - s);   // 減速抵達（爬升用）
+const easeIn = (s: number) => s * s;                    // 加速離開（被打下去用）
 
 /** 高度上限。MAX_ALT = 0 表示不封頂（天空無限）。 */
 function clampAlt(a: number): number {
     const lo = PHYS.MIN_ALT;
     const hi = PHYS.MAX_ALT > 0 ? Math.max(lo + PHYS.STEP_UP, PHYS.MAX_ALT) : Infinity;
     return Math.max(lo, Math.min(hi, a));
-}
-
-function layout(ops: ObjKind[], landed: boolean, rng: Rng, st: Style, gapScale: number) {
-    // ── ① 每個物件的 tick 與高度（等高階梯）──
-    const hits: { tick: number; y: number }[] = [];
-    const G = (n: number) => Math.max(PHYS.MIN_GAP, Math.min(PHYS.MAX_GAP, Math.round(n)));
-
-    let tick = G(PHYS.TAKEOFF_TICKS * st.gap * gapScale);
-    let alt = clampAlt(PHYS.MIN_ALT + PHYS.TAKEOFF_STEPS * PHYS.STEP_UP);
-
-    for (let i = 0; i < ops.length; i++) {
-        if (i > 0) {
-            const jit = 1 + rng.range(-PHYS.GAP_JITTER, PHYS.GAP_JITTER);
-            tick += G(PHYS.BASE_GAP * st.gap * gapScale * jit);
-            alt = clampAlt(alt + stepFor(ops[i - 1]));
-        }
-        hits.push({ tick, y: alt });
-    }
-
-    // ── ② 收尾段 ──
-    const lastY = hits.length
-        ? clampAlt(hits[hits.length - 1].y + stepFor(ops[ops.length - 1]))
-        : clampAlt(PHYS.MIN_ALT + PHYS.TAKEOFF_STEPS * PHYS.STEP_UP);
-    const lastT = hits.length ? hits[hits.length - 1].tick : 0;
-    const endY = landed ? PHYS.DECK_Y : PHYS.WATER_Y;
-    const rate = landed ? PHYS.LAND_RATE : PHYS.SPLASH_RATE;
-    const tMin = landed ? PHYS.LAND_TICKS_MIN : PHYS.SPLASH_TICKS_MIN;
-    const tMax = landed ? PHYS.LAND_TICKS_MAX : PHYS.SPLASH_TICKS_MAX;
-    const endTicks = Math.max(tMin, Math.min(tMax,
-        Math.round(Math.abs(Math.max(lastY, endY + 20) - endY) / Math.max(1, rate))));
-    const terminalTick = lastT + PHYS.POP_TICKS + endTicks;
-
-    return { hits, lastY, terminalTick };
 }
 
 /**
@@ -465,63 +401,105 @@ function layout(ops: ObjKind[], landed: boolean, rng: Rng, st: Style, gapScale: 
  */
 function minimumRouteTicks(ops: ObjKind[], landed: boolean): number {
     const end = landed ? PHYS.LAND_TICKS_MAX : PHYS.SPLASH_TICKS_MAX;
-    return PHYS.MIN_GAP * (ops.length + 1) + PHYS.POP_TICKS + end + 4;
+    return PHYS.MIN_GAP * (ops.length + 1) + PHYS.RISE_TICKS + end + 4;
+}
+
+/** 走完一整條航線,逐 tick 產出高度。回傳的最後一個 tick 就是終點。 */
+function buildRoute(ops: ObjKind[], landed: boolean, rng: Rng, st: Style, gapScale: number) {
+    const ys: number[] = [];
+    const hits: { tick: number; y: number }[] = [];
+    const riseWindows: { from: number; to: number }[] = [];
+    const G = (n: number) => Math.max(PHYS.MIN_GAP, Math.min(PHYS.MAX_GAP, Math.round(n)));
+
+    // ── 起飛：從航母甲板爬升,到頂點後開始拋物線下降,剛好落在第一個物件上 ──
+    const firstY = clampAlt(PHYS.MIN_ALT + PHYS.TAKEOFF_STEPS * PHYS.STEP_UP);
+    const tk0 = Math.max(PHYS.MIN_GAP, Math.round(PHYS.TAKEOFF_TICKS * st.gap * gapScale));
+    const climbT = Math.max(2, Math.round(tk0 * 0.6));
+    const fallT = Math.max(1, tk0 - climbT);
+    const apex = firstY + PHYS.GLIDE_DROP;
+
+    riseWindows.push({ from: 0, to: climbT });
+    for (let t = 0; t < climbT; t++) {
+        ys.push(PHYS.DECK_Y + (apex - PHYS.DECK_Y) * easeOut(t / climbT));
+    }
+    for (let t = 1; t <= fallT; t++) {
+        const s = t / fallT;
+        ys.push(apex - PHYS.GLIDE_DROP * s * s);
+    }
+    // 此時 ys.length === tk0 + 1,下一個索引就是第一個物件的 tick
+
+    let cur = firstY;
+
+    for (let i = 0; i < ops.length; i++) {
+        const tick = ys.length;
+        ys.push(cur);                       // 命中當下
+        hits.push({ tick, y: cur });
+
+        const isLast = i === ops.length - 1;
+        const delta = stepFor(ops[i]);
+        const peak = clampAlt(cur + delta);
+
+        // 段落總長
+        const jit = 1 + rng.range(-PHYS.GAP_JITTER, PHYS.GAP_JITTER);
+        const segLen = isLast ? 0 : G(PHYS.BASE_GAP * st.gap * gapScale * jit);
+
+        // ① 升／降表演
+        const riseT = isLast
+            ? PHYS.RISE_TICKS
+            : Math.max(1, Math.min(PHYS.RISE_TICKS, segLen - 2));
+        if (delta > 0) riseWindows.push({ from: tick, to: tick + riseT });
+        for (let t = 1; t <= riseT; t++) {
+            const s = t / riseT;
+            ys.push(cur + (peak - cur) * (delta > 0 ? easeOut(s) : easeIn(s)));
+        }
+
+        if (isLast) { cur = peak; break; }
+
+        // ② 拋物線下降到下一個物件
+        const glideT = Math.max(1, segLen - 1 - riseT);
+        const drop = Math.min(PHYS.GLIDE_DROP, Math.max(0, peak - PHYS.MIN_ALT));
+        for (let t = 1; t <= glideT; t++) {
+            const s = t / glideT;
+            ys.push(peak - drop * s * s);
+        }
+        cur = peak - drop;
+    }
+
+    // ── 收尾：降落在目的艦甲板,或墜入海中 ──
+    const endY = landed ? PHYS.DECK_Y : PHYS.WATER_Y;
+    const rate = landed ? PHYS.LAND_RATE : PHYS.SPLASH_RATE;
+    const tMin = landed ? PHYS.LAND_TICKS_MIN : PHYS.SPLASH_TICKS_MIN;
+    const tMax = landed ? PHYS.LAND_TICKS_MAX : PHYS.SPLASH_TICKS_MAX;
+    const fall = Math.max(0, cur - endY);
+    const endT = Math.max(tMin, Math.min(tMax, Math.round(fall / Math.max(1, rate))));
+
+    for (let t = 1; t <= endT; t++) {
+        const s = t / endT;
+        // 降落：由緩到急再拉平（smoothstep）。墜海：拋物線加速砸下去。
+        const k = landed ? s * s * (3 - 2 * s) : s * s;
+        ys.push(cur - fall * k);
+    }
+
+    return { ys, hits, riseWindows, terminalTick: ys.length - 1 };
 }
 
 function planFlight(ops: ObjKind[], landed: boolean, rng: Rng, st: Style): FlightPlan {
-    // 局長上限：取設定值與「物理上做得到的最短長度」兩者較大者 → 這個上限一定達得到
+    // 局長上限：取設定值與「最緊排列所需長度」兩者較大者 → 這個上限一定達得到
     const cap = Math.max(PHYS.MAX_ROUND_TICKS, minimumRouteTicks(ops, landed));
 
-    // 超過上限就縮 gap 重排（純編排,重排成本近乎零）
     let gapScale = 1;
-    let L = layout(ops, landed, rng, st, gapScale);
-    for (let i = 0; i < 8 && L.terminalTick > cap; i++) {
-        gapScale *= (cap / L.terminalTick) * 0.96;
-        L = layout(ops, landed, rng, st, gapScale);
-    }
-    const { hits, lastY, terminalTick } = L;
-
-    // ── ③ 關鍵影格 ──
-    const keys: Key[] = [{ t: 0, y: PHYS.DECK_Y }];
-
-    for (let i = 0; i < hits.length; i++) {
-        const h = hits[i];
-        const nextT = i + 1 < hits.length ? hits[i + 1].tick : terminalTick;
-        const nextY = i + 1 < hits.length ? hits[i + 1].y : lastY;
-
-        keys.push({ t: h.tick, y: h.y });                              // 命中點
-
-        const popT = h.tick + Math.max(1, Math.min(PHYS.POP_TICKS, Math.floor((nextT - h.tick) / 3)));
-        const popY = Math.max(PHYS.FLOOR_Y, h.y + popFor(ops[i]));
-        if (popT < nextT) keys.push({ t: popT, y: popY });              // 命中後的彈起
-
-        // 下垂量依「離下限還剩多少」收斂 → 曲線在數學上不可能穿過 FLOOR_Y
-        const base = Math.min(popY, nextY);
-        const room = Math.max(0, base - PHYS.FLOOR_Y);
-        const sag = Math.min(PHYS.SAG * st.sag, room * 0.55);
-        const sagT = Math.round(popT + (nextT - popT) * 0.55);
-        if (sagT > popT && sagT < nextT && sag > 1) keys.push({ t: sagT, y: base - sag });
+    let R = buildRoute(ops, landed, rng, st, gapScale);
+    for (let i = 0; i < 8 && R.terminalTick > cap; i++) {
+        gapScale *= (cap / R.terminalTick) * 0.96;
+        R = buildRoute(ops, landed, rng, st, gapScale);
     }
 
-    // 收尾：中間補一格讓 Catmull-Rom 走出想要的曲線
-    const lastT = hits.length ? hits[hits.length - 1].tick : 0;
-    const endY = landed ? PHYS.DECK_Y : PHYS.WATER_Y;
-    const midT = Math.round((lastT + terminalTick) / 2);
-    if (midT > lastT && midT < terminalTick) {
-        // 降落：等速下降後拉平。墜海：先撐住再加速砸下去
-        keys.push({ t: midT, y: landed ? (lastY + endY) / 2 : lastY * 0.78 });
-    }
-    keys.push({ t: terminalTick, y: endY });
-    keys.push({ t: terminalTick + 6, y: endY - (landed ? 0 : 40) });    // 尾端切線用
-
-    // ── ④ 取樣 ──
-    const ys = sampleKeys(keys, terminalTick);
-    const frames: Frame[] = [];
+    const { ys, hits, riseWindows, terminalTick } = R;
     const maxPitch = PHYS.PITCH_MAX_DEG * Math.PI / 180;
+    const frames: Frame[] = [];
     let peak = 0;
     for (let t = 0; t <= terminalTick; t++) {
-        let y = ys[t];
-        if (t < terminalTick) y = Math.max(y, landed ? PHYS.FLOOR_Y * 0.9 : 0);
+        const y = ys[t];
         peak = Math.max(peak, y);
         const dy = (ys[Math.min(t + 1, terminalTick)] - ys[Math.max(t - 1, 0)]) / 2;
         const pitch = Math.max(-maxPitch, Math.min(maxPitch, Math.atan2(dy, PHYS.PITCH_RUN)));
@@ -533,7 +511,7 @@ function planFlight(ops: ObjKind[], landed: boolean, rng: Rng, st: Style): Fligh
         ? terminalTick
         : terminalTick + (rng.chance(0.7) ? 6 + rng.int(11) : 24 + rng.int(28));
 
-    return { frames, hits, terminalTick, carrierTick, peakAltitude: peak };
+    return { frames, hits, terminalTick, carrierTick, peakAltitude: peak, riseWindows };
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -583,7 +561,7 @@ function scatterDecoys(plan: FlightPlan, landed: boolean, rng: Rng, startId: num
         for (let attempt = 0; attempt < 4 && !placed; attempt++) {
             const d = min + PHYS.HIT_RADIUS * rng.range(0.05, wantNear ? 0.25 : 2.2);
             const y = yAt(t) + (up ? d : -d);
-            if (y < PHYS.FLOOR_Y * 0.4) continue;
+            if (y < PHYS.DECOY_MIN_Y) continue;
             if (clearance(t, y) <= min) continue;        // 淨空不足 → 換一個距離
             out.push({
                 id: id++, tick: t, y, kind: randomDecoyKind(rng),
@@ -664,6 +642,7 @@ export function buildPerformance(result: RoundResult): PerformanceScript {
         finalBalance: result.landed ? achieved : 0,
         peakBalance: balances.length ? Math.max(...balances) : 1,
         peakAltitude: plan.peakAltitude,
+        riseWindows: plan.riseWindows,
         exact,
         style,
     };

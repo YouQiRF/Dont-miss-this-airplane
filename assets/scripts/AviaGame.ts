@@ -87,11 +87,17 @@ export class AviaGame extends Component {
     ];
 
     // ════════════════ ④ 航線編排（沒有物理,全部是編排參數）════════════════
-    @property({ type: CCFloat, group: G_PATH, tooltip: '【等高階梯】吃到任何 +N 或 ×N,航線一律抬高這麼多 px。與數字大小、當前高度都無關' })
-    stepUp = 34;
+    @property({ type: CCFloat, group: G_PATH, tooltip: '【只有吃到才上升】吃到任何 +N 或 ×N,航線一律抬高這麼多 px。與數字大小、當前高度都無關' })
+    stepUp = 46;
 
-    @property({ type: CCFloat, group: G_PATH, tooltip: '【等高階梯】吃到火箭一律壓低這麼多 px' })
-    stepDown = 34;
+    @property({ type: CCFloat, group: G_PATH, tooltip: '【只有飛彈才有下降表演】吃到飛彈一律壓低這麼多 px' })
+    stepDown = 46;
+
+    @property({ type: CCFloat, group: G_PATH, tooltip: '【平飛 = 拋物線下降】每個段落固定往下掉這麼多 px。每個物件的淨變化 = ±階距 − 這個值' })
+    glideDrop = 22;
+
+    @property({ type: CCInteger, group: G_PATH, tooltip: '升／降表演持續幾 tick。其餘時間航線一律在拋物線下降' })
+    riseTicks = 4;
 
     @property({ type: CCInteger, group: G_PATH, tooltip: '第一個物件放在甲板上方幾階' })
     takeoffSteps = 2;
@@ -102,20 +108,8 @@ export class AviaGame extends Component {
     @property({ type: CCFloat, group: G_PATH, tooltip: '航線最高高度。0 = 不封頂（天空無限,鏡頭會跟上去）' })
     maxAlt = 0;
 
-    @property({ type: CCFloat, group: G_PATH, tooltip: '曲線的絕對下緣（下垂量會依離這裡的距離自動收斂,保證不中途觸水）' })
-    floorY = 62;
-
-    @property({ type: CCFloat, group: G_PATH, tooltip: '命中瞬間往上彈多少 px（純回饋,不改變階梯高度）' })
-    popUp = 11;
-
-    @property({ type: CCFloat, group: G_PATH, tooltip: '被火箭打到瞬間往下沉多少 px' })
-    popDown = -13;
-
-    @property({ type: CCInteger, group: G_PATH, tooltip: '彈起持續幾 tick' })
-    popTicks = 3;
-
-    @property({ type: CCFloat, group: G_PATH, tooltip: '兩物件之間的航線下垂量 px（滑翔感的來源）。設 0 = 完全平直的折線' })
-    sag = 26;
+    @property({ type: CCFloat, group: G_PATH, tooltip: '誘餌可放置的最低高度' })
+    decoyMinY = 24;
 
     @property({ type: CCInteger, group: G_PATH, tooltip: '物件間距（tick）。調小 → 場上物件更多更密' })
     baseGap = 9;
@@ -123,9 +117,9 @@ export class AviaGame extends Component {
     @property({ slide: true, range: [0, 0.8, 0.01], group: G_PATH, tooltip: '間距隨機抖動比例' })
     gapJitter = 0.35;
 
-    @property({ type: CCInteger, group: G_PATH }) minGap = 5;
+    @property({ type: CCInteger, group: G_PATH }) minGap = 6;
     @property({ type: CCInteger, group: G_PATH }) maxGap = 22;
-    @property({ type: CCInteger, group: G_PATH, tooltip: '起飛到第一個物件的距離（tick）' }) takeoffTicks = 8;
+    @property({ type: CCInteger, group: G_PATH, tooltip: '從航母甲板起飛到第一個物件的距離（tick）' }) takeoffTicks = 10;
 
     @property({ type: CCFloat, group: G_PATH, tooltip: '每 tick 前進的水平像素' })
     pxPerTick = 40;
@@ -162,16 +156,14 @@ export class AviaGame extends Component {
     altDisplayMax = 420;
 
     // ════════════════ ⑤ 手感範圍（每局在區間內隨機。階梯高度不在此列,永遠等高）════════════════
-    @property({ type: CCFloat, group: G_STY, tooltip: '物件間距縮放下限' }) gapMin = 0.85;
+    @property({ type: CCFloat, group: G_STY, tooltip: '物件間距縮放下限（這是唯一的每局隨機項）' }) gapMin = 0.85;
     @property({ type: CCFloat, group: G_STY }) gapMax = 1.20;
-    @property({ type: CCFloat, group: G_STY, tooltip: '下垂量縮放下限' }) sagMin = 0.75;
-    @property({ type: CCFloat, group: G_STY }) sagMax = 1.30;
 
     // ════════════════ ⑥ 播放速度 ════════════════
-    @property({ type: CCFloat, group: G_SPD, tooltip: '「慢」每 tick 幾毫秒' }) tickMsSlow = 200;
-    @property({ type: CCFloat, group: G_SPD }) tickMsMedium = 120;
-    @property({ type: CCFloat, group: G_SPD }) tickMsFast = 70;
-    @property({ type: CCFloat, group: G_SPD }) tickMsUltra = 32;
+    @property({ type: CCFloat, group: G_SPD, tooltip: '「慢」每 tick 幾毫秒' }) tickMsSlow = 140;
+    @property({ type: CCFloat, group: G_SPD }) tickMsMedium = 82;
+    @property({ type: CCFloat, group: G_SPD }) tickMsFast = 50;
+    @property({ type: CCFloat, group: G_SPD }) tickMsUltra = 24;
 
     @property({ type: SpeedOption, group: G_SPD, tooltip: '預設速度。速度只改播放快慢,絕不影響結果' })
     defaultSpeed: SpeedOption = SpeedOption.Medium;
@@ -197,6 +189,9 @@ export class AviaGame extends Component {
 
     @property({ type: CCFloat, group: G_VIS, tooltip: '鏡頭跟隨速度。越大越硬,越小越飄' })
     camLag = 4;
+
+    @property({ type: CCFloat, group: G_VIS, tooltip: '飛彈額外的向左速度（px/tick）。飛彈一律從畫面右側往左飛,越大越晚出現、飛得越快' })
+    rocketApproach = 55;
 
     @property({ group: G_VIS }) trailEnabled = true;
     @property({ type: CCInteger, group: G_VIS, tooltip: '尾煙保留幾個取樣點' }) trailLength = 26;
@@ -295,14 +290,12 @@ export class AviaGame extends Component {
         P.configurePhys({
             STEP_UP: this.stepUp,
             STEP_DOWN: this.stepDown,
+            GLIDE_DROP: this.glideDrop,
+            RISE_TICKS: this.riseTicks,
             TAKEOFF_STEPS: this.takeoffSteps,
             MIN_ALT: this.minAlt,
             MAX_ALT: this.maxAlt,
-            FLOOR_Y: this.floorY,
-            POP_UP: this.popUp,
-            POP_DOWN: this.popDown,
-            POP_TICKS: this.popTicks,
-            SAG: this.sag,
+            DECOY_MIN_Y: this.decoyMinY,
             BASE_GAP: this.baseGap,
             GAP_JITTER: this.gapJitter,
             MIN_GAP: this.minGap,
@@ -328,8 +321,6 @@ export class AviaGame extends Component {
         P.configureStyle({
             gapMin: Math.min(this.gapMin, this.gapMax),
             gapMax: Math.max(this.gapMin, this.gapMax),
-            sagMin: Math.min(this.sagMin, this.sagMax),
-            sagMax: Math.max(this.sagMin, this.sagMax),
         });
         P.configureTickMs({
             slow: this.tickMsSlow, medium: this.tickMsMedium,
@@ -357,6 +348,7 @@ export class AviaGame extends Component {
             pxPerTick: this.pxPerTick,
             camFollowStart: this.camFollowStart,
             camLag: this.camLag,
+            rocketApproach: this.rocketApproach,
             skyTop: this.skyTop, skyBottom: this.skyBottom, skyHigh: this.skyHigh,
             seaDeep: this.seaDeep, seaLight: this.seaLight, foam: this.foam,
             planeBody: this.planeBody, planeAccent: this.planeAccent, trailColor: this.trailColor,
@@ -479,7 +471,7 @@ export class AviaGame extends Component {
                 `  航程      ${s.terminalTick} tick / 航母在 ${s.carrierTick}（終點必定存在）\n` +
                 `  物件      命中 ${hits.length} / 誘餌 ${s.objects.length - hits.length}（誘餌保證碰不到）\n` +
                 `  最高點    ${s.peakAltitude.toFixed(0)}px\n` +
-                `  手感      gap=${s.style.gap.toFixed(2)} sag=${s.style.sag.toFixed(2)}`);
+                `  手感      gap=${s.style.gap.toFixed(2)}`);
         }
     }
 

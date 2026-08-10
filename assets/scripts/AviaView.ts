@@ -17,6 +17,7 @@ export interface ViewConfig {
 
     camFollowStart: number;    // 飛機超過畫面高度的幾成時鏡頭開始跟
     camLag: number;            // 鏡頭跟隨速度（每秒收斂倍率）
+    rocketApproach: number;    // 飛彈額外的向左速度（px/tick）。越大越晚出現、越快飛過來
 
     skyTop: Color; skyBottom: Color;
     skyHigh: Color;            // 高空時天空漸層要染向的顏色
@@ -54,7 +55,6 @@ export class AviaView {
     // ── 節點層 ──────────────────────────────────────────────
     private stage!: Node;
     private gSky!: Graphics;
-    private gClouds!: Graphics;
     private gSeaBack!: Graphics;
     private world!: Node;
     private gTrail!: Graphics;
@@ -82,6 +82,8 @@ export class AviaView {
     private objNodes = new Map<number, Node>();
     private trail: { x: number; y: number }[] = [];
     private fx: Fx[] = [];
+    /** 飛彈：不是靜止物件,會從畫面右側往左飛過來,在自己的 tick 剛好抵達飛機所在的 x */
+    private rockets: { node: Node; baseX: number; tick: number }[] = [];
     private camRoot!: Node;
     private camY = 0;
     private skyDrawnAt = -9999;
@@ -138,9 +140,8 @@ export class AviaView {
         this.stage.setPosition(-W / 2, -H / 2);
         root.addChild(this.stage);
 
-        // 天空與雲固定在螢幕上（雲自己做視差）,其餘全部掛在 camRoot 底下由鏡頭帶動
+        // 天空固定在螢幕上,其餘全部掛在 camRoot 底下由鏡頭帶動（背景不放雲）
         this.gSky = this.mkGraphics(this.stage, 'sky');
-        this.gClouds = this.mkGraphics(this.stage, 'clouds');
 
         this.camRoot = this.mk(this.stage, 'camRoot');
         this.gSeaBack = this.mkGraphics(this.camRoot, 'seaBack');
@@ -309,32 +310,62 @@ export class AviaView {
         }
     }
 
+    /**
+     * 航母。甲板面剛好落在 PHYS.DECK_Y（= 航線最低高度）,
+     * 所以飛機是真的停在甲板上起飛、也是真的降落在甲板上,不會浮在半空。
+     * 船身從水線一路撐到甲板,整座船都在畫面可見範圍內。
+     */
     private drawCarrier(g: Graphics, destination: boolean) {
         const c = this.cfg.carrierColor;
         const dark = new Color(Math.round(c.r * 0.55), Math.round(c.g * 0.55), Math.round(c.b * 0.6), 255);
-        // 船體
+        const mid = new Color(Math.round(c.r * 0.78), Math.round(c.g * 0.78), Math.round(c.b * 0.82), 255);
+        const D = PHYS.DECK_Y;          // 甲板面高度（水面 = 0）
+        const deckH = 20;
+        const hullTop = D - deckH;
+
+        g.clear();
+        // 船身：水線下方一點 → 甲板下緣,往下微收
         g.fillColor = dark;
-        g.moveTo(-150, 0); g.lineTo(150, 0); g.lineTo(120, -52); g.lineTo(-118, -52);
+        g.moveTo(-152, hullTop); g.lineTo(152, hullTop);
+        g.lineTo(124, -34); g.lineTo(-118, -34);
         g.close(); g.fill();
+        // 船身上半段亮一階,做出量體
+        g.fillColor = mid;
+        g.rect(-152, hullTop - Math.min(46, hullTop * 0.45), 304, Math.min(46, hullTop * 0.45));
+        g.fill();
+        // 舷側開口
+        g.fillColor = new Color(18, 26, 38, 190);
+        for (let x = -120; x < 120; x += 42) g.rect(x, hullTop - 34, 22, 12);
+        g.fill();
+
         // 甲板
         g.fillColor = c;
-        g.rect(-150, 0, 300, 16); g.fill();
+        g.rect(-152, hullTop, 304, deckH); g.fill();
         // 甲板中線
-        g.strokeColor = new Color(255, 255, 255, 90);
+        g.strokeColor = new Color(255, 255, 255, 95);
         g.lineWidth = 3;
-        for (let x = -132; x < 132; x += 34) { g.moveTo(x, 8); g.lineTo(x + 18, 8); }
+        for (let x = -134; x < 134; x += 34) { g.moveTo(x, hullTop + deckH / 2); g.lineTo(x + 18, hullTop + deckH / 2); }
         g.stroke();
-        // 艦島
+
+        // 艦島（起飛艦放左邊,目的艦放右邊,才不會擋住降落點）
+        const ix = destination ? 64 : -120;
         g.fillColor = dark;
-        g.rect(destination ? 62 : -118, 16, 46, 44); g.fill();
+        g.rect(ix, D, 48, 46); g.fill();
         g.fillColor = new Color(255, 210, 90, 255);
-        g.rect(destination ? 70 : -110, 40, 30, 8); g.fill();
-        // 目的艦：閃爍導引燈桿
+        g.rect(ix + 8, D + 26, 32, 8); g.fill();
+        g.strokeColor = dark; g.lineWidth = 3;
+        g.moveTo(ix + 24, D + 46); g.lineTo(ix + 24, D + 74); g.stroke();
+
+        // 目的艦：降落導引燈
         if (destination) {
-            g.strokeColor = new Color(120, 255, 180, 200);
-            g.lineWidth = 4;
-            g.moveTo(-150, 16); g.lineTo(-150, 90); g.stroke();
+            g.fillColor = new Color(120, 255, 180, 220);
+            for (let x = -140; x < 40; x += 30) { g.circle(x, D + 6, 4); }
+            g.fill();
         }
+
+        // 吃水線泡沫
+        g.strokeColor = this.cfg.foam; g.lineWidth = 4;
+        g.moveTo(-160, 2); g.lineTo(160, 2); g.stroke();
     }
 
     private drawPlane(g: Graphics) {
@@ -360,13 +391,21 @@ export class AviaView {
         const { pickupColor, boostColor, rocketColor } = this.cfg;
         g.clear();
         if (kind.kind === 'ROCKET') {
+            // 機首朝左 —— 飛彈是從畫面右側往左飛過來的
             g.fillColor = new Color(rocketColor.r, rocketColor.g, rocketColor.b, 70);
             g.circle(0, 0, 34); g.fill();
             g.fillColor = rocketColor;
-            g.moveTo(24, 0); g.lineTo(2, 11); g.lineTo(-22, 8);
-            g.lineTo(-22, -8); g.lineTo(2, -11); g.close(); g.fill();
+            g.moveTo(-26, 0); g.lineTo(-2, 11); g.lineTo(22, 8);
+            g.lineTo(22, -8); g.lineTo(-2, -11); g.close(); g.fill();
+            // 尾鰭
+            g.fillColor = new Color(Math.round(rocketColor.r * 0.7), 40, 40, 255);
+            g.moveTo(22, 8); g.lineTo(30, 18); g.lineTo(30, 2); g.close(); g.fill();
+            g.moveTo(22, -8); g.lineTo(30, -18); g.lineTo(30, -2); g.close(); g.fill();
+            // 尾焰（在右邊,因為往左飛）
             g.fillColor = new Color(255, 220, 120, 255);
-            g.moveTo(-22, 5); g.lineTo(-38, 0); g.lineTo(-22, -5); g.close(); g.fill();
+            g.moveTo(24, 6); g.lineTo(46, 0); g.lineTo(24, -6); g.close(); g.fill();
+            g.fillColor = new Color(255, 150, 60, 190);
+            g.moveTo(30, 4); g.lineTo(62, 0); g.lineTo(30, -4); g.close(); g.fill();
             return;
         }
         const col = kind.kind === 'BOOST' ? boostColor : pickupColor;
@@ -406,6 +445,7 @@ export class AviaView {
 
         this.objNodes.forEach(n => { Tween.stopAllByTarget(n); n.destroy(); });
         this.objNodes.clear();
+        this.rockets.length = 0;
 
         const { pxPerTick, waterScreenY } = this.cfg;
 
@@ -422,6 +462,8 @@ export class AviaView {
                 l.node.getComponent(UITransform)!.setAnchorPoint(0.5, 0.5);
                 l.node.setPosition(0, 0);
                 l.string = o.kind.kind === 'BOOST' ? `×${o.kind.value}` : `+${o.kind.value}`;
+            } else {
+                this.rockets.push({ node: n, baseX: o.tick * pxPerTick, tick: o.tick });
             }
             this.objNodes.set(o.id, n);
         }
@@ -511,12 +553,19 @@ export class AviaView {
             this.gTrail.clear();
         }
 
+        // 飛彈：從畫面右側往左飛,在自己的 tick 剛好抵達飛機的 x
+        const app = this.cfg.rocketApproach;
+        for (const r of this.rockets) {
+            if (!r.node.isValid) continue;
+            const dx = Math.min((r.tick - t) * app, W * 1.4);
+            r.node.setPosition(r.baseX + dx, r.node.position.y);
+        }
+
         // 天空只在鏡頭有明顯移動時重畫（28 條色帶,不必每 frame 重來）
         if (Math.abs(this.camY - this.skyDrawnAt) > 4) {
             this.skyDrawnAt = this.camY;
             this.drawSky(this.camY);
         }
-        this.drawClouds(scroll, this.camY);
         this.drawSea(scroll);
         this.updateFx(dt);
         if (s && playing) {
@@ -556,23 +605,6 @@ export class AviaView {
             g.moveTo(this.trail[i - 1].x, this.trail[i - 1].y);
             g.lineTo(this.trail[i].x, this.trail[i].y);
             g.stroke();
-        }
-    }
-
-    /** 雲：水平視差 + 垂直視差,而且垂直方向會循環 → 一直往上飛也永遠有雲 */
-    private drawClouds(scroll: number, camY: number) {
-        const { W, H } = this.cfg;
-        const g = this.gClouds;
-        const bandH = H * 1.7;
-        g.clear();
-        g.fillColor = new Color(255, 255, 255, 46);
-        for (let i = 0; i < 12; i++) {
-            const x = mod(i * 431.7 + scroll * 0.12, W + 460) - 230;
-            const y = mod(i * 263.1 - camY * 0.45, bandH) - H * 0.18;
-            const r = 30 + (i % 4) * 15;
-            g.circle(x, y, r); g.fill();
-            g.circle(x + r * 0.9, y - r * 0.25, r * 0.75); g.fill();
-            g.circle(x - r * 0.85, y - r * 0.3, r * 0.62); g.fill();
         }
     }
 
@@ -812,4 +844,3 @@ function fmt(v: number) {
     return v.toFixed(2);
 }
 function easeOut(p: number) { return 1 - Math.pow(1 - p, 3); }
-function mod(a: number, n: number) { return ((a % n) + n) % n; }
