@@ -401,31 +401,38 @@ export class AviaView {
     }
 
     /**
-     * 海面上持續出現的航母（純佈景）。
-     * 有兩層：遠景小而淡、近景大一點,各有各的視差,所以整片海一直有船在動。
-     * 它們不是降落目標 —— 目的艦有綠色導引燈,一眼分得出來。
+     * 海面上持續出現的航母。
+     *
+     * 跟結算用的目的艦「長得一模一樣」—— 同樣的尺寸、同樣的顏色、同樣的導引燈,
+     * 而且用同一個 par = 1 的捲動速度,所以它們就是同一種船,只是這一局沒被選為終點。
+     * 玩家無法從外觀分辨哪艘是終點,只能看飛機最後停在哪。
+     *
+     * 唯一的差別是位置：會避開起飛艦與目的艦,免得疊在一起。
      */
     private drawSeaCarriers(scroll: number) {
-        const { W, waterScreenY, seaCarrierSpacing } = this.cfg;
+        const { W, waterScreenY, seaCarrierSpacing, pxPerTick } = this.cfg;
         const g = this.gShips;
         g.clear();
         if (seaCarrierSpacing <= 0) return;
 
-        const layers = [
-            { par: 0.42, scale: 0.34, haze: 0.72, dy: 34, phase: 0 },
-            { par: 0.68, scale: 0.55, haze: 0.42, dy: 12, phase: 0.5 },
-        ];
-        for (const L of layers) {
-            const gap = seaCarrierSpacing / L.par;
-            const left = -scroll * L.par - W * 0.3;
-            const i0 = Math.floor(left / gap) - 1;
-            for (let i = i0; i < i0 + 5; i++) {
-                const h = hash01(i * 2654435761 + Math.round(L.phase * 1000));
-                const x = (i + L.phase) * gap + (h - 0.5) * gap * 0.35 + scroll * L.par;
-                if (x < -W * 0.4 || x > W * 1.4) continue;
-                const s = L.scale * (0.85 + h * 0.3);
-                this.paintCarrier(g, x, waterScreenY + L.dy, s, L.haze, false);
-            }
+        const CARRIER_W = 320;                       // 船體寬度,用來判斷會不會疊到
+        const startX = 0;
+        const endX = (this.script ? this.script.carrierTick : 30) * pxPerTick;
+
+        const gap = seaCarrierSpacing;
+        const i0 = Math.floor((-scroll - W * 0.4) / gap) - 1;
+        const i1 = Math.ceil((-scroll + W * 1.4) / gap) + 1;
+
+        for (let i = i0; i <= i1; i++) {
+            const h = hash01(i * 2654435761);
+            const worldX = i * gap + (h - 0.5) * gap * 0.25;
+            // 避開兩艘主角艦
+            if (Math.abs(worldX - startX) < CARRIER_W) continue;
+            if (Math.abs(worldX - endX) < CARRIER_W) continue;
+
+            const x = worldX + scroll;
+            if (x < -CARRIER_W || x > W + CARRIER_W) continue;
+            this.paintCarrier(g, x, waterScreenY, 1, 0, true);
         }
     }
 

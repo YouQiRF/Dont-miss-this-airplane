@@ -384,7 +384,7 @@
     "camFollowStart": 0.62,
     "camLag": 4,
     "rocketApproach": 55,
-    "seaCarrierSpacing": 780,
+    "seaCarrierSpacing": 1500,
     "metersPerPx": 0.25,
     "distanceUnit": "m",
     "trailEnabled": true,

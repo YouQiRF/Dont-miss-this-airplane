@@ -193,8 +193,8 @@ export class AviaGame extends Component {
     @property({ type: CCFloat, group: G_VIS, tooltip: '飛彈額外的向左速度（px/tick）。飛彈一律從畫面右側往左飛,越大越晚出現、飛得越快' })
     rocketApproach = 55;
 
-    @property({ type: CCFloat, group: G_VIS, tooltip: '海面佈景航母的間距（px）。整片海會持續有船經過。0 = 關閉' })
-    seaCarrierSpacing = 780;
+    @property({ type: CCFloat, group: G_VIS, tooltip: '海面航母的間距（px）。跟目的艦長得一模一樣,整片海會持續有船經過。0 = 關閉' })
+    seaCarrierSpacing = 1500;
 
     @property({ type: CCFloat, group: G_VIS, tooltip: 'HUD 讀數的單位換算：1 px = 幾個顯示單位。純表演,不影響任何邏輯' })
     metersPerPx = 0.25;

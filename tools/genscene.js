@@ -118,7 +118,7 @@ const gameProps = {
 
   waterScreenY: 110, planeScreenXRatio: 0.34,
   camFollowStart: 0.62, camLag: 4, rocketApproach: 55,
-  seaCarrierSpacing: 780, metersPerPx: 0.25, distanceUnit: 'm',
+  seaCarrierSpacing: 1500, metersPerPx: 0.25, distanceUnit: 'm',
   trailEnabled: true, trailLength: 26, shakeIntensity: 14, showDebugPath: false,
   skyTop: COL(38, 96, 168, 255),
   skyBottom: COL(150, 214, 236, 255),
