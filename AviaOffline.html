@@ -62,7 +62,7 @@
  * 以下由 tools/genoffline.js 自動產生，請勿直接修改這個檔案。
  * 演算法來源：assets/scripts/AviaPath.ts
  * 渲染來源：  tools/offline/renderer.js
- * 產生時間：  2026-08-11T07:31:46.773Z
+ * 產生時間：  2026-08-11T07:41:53.799Z
  * ============================================================ */
 
 /* ───────────────── 演算法（AviaPath.ts） ───────────────── */
@@ -244,10 +244,13 @@ const PHYS = {
     SLIDE_DECEL_TICKS: 11,  // 滑行減速持續幾 tick
     EDGE_OVERHANG: 0,       // 停下時機身中心相對甲板尾端的位移。0 = 剛好半截在外
     MIN_SLIDE_ROOM: 90,     // 觸艦點離甲板尾端至少要有這麼多 px,否則當作沒撞到
-    WOBBLE_TICKS: 18,       // 搖晃持續
-    WOBBLE_AMP_DEG: 17,     // 搖晃最大傾角
-    WOBBLE_CYCLES: 2.2,     // 搖晃來回次數
-    SETTLE_TICKS: 9,        // 穩住收斂
+    // 搖晃 = 機身以甲板邊緣為支點「前傾 → 抬高」,重複 WOBBLE_CYCLES 次。
+    // 不是高頻抖動 —— 慢慢晃兩下就好,那個停頓才是張力所在。
+    WOBBLE_TICKS: 34,       // 搖晃總長度。這個值決定快慢：越大越慢
+    WOBBLE_AMP_DEG: 19,     // 前傾／抬高的最大角度
+    WOBBLE_CYCLES: 2,       // 晃幾下（一下 = 前傾一次 + 抬高一次）
+    WOBBLE_SINK: 5,         // 搖晃時機身中心的上下位移。0 = 完全只有轉動,不上下浮
+    SETTLE_TICKS: 12,       // 穩住收斂
     HOLD_PITCH_DEG: -9,     // 穩住後停在邊緣的微傾角
     TIP_TICKS: 13,          // 前傾翻落
     TIP_PITCH_DEG: -78,
@@ -710,8 +713,10 @@ function appendEnding(
         for (let k = 1; k <= wT; k++) {
             const s = k / wT;
             const decay = 1 - s * 0.55;                              // 慢慢收斂,但沒有完全停
+            // sin 從 0 出發先往負（機首前傾）再轉正（機首抬高）→ 剛好是「晃一下」
             const pitch = -amp * decay * Math.sin(Math.PI * 2 * PHYS.WOBBLE_CYCLES * s);
-            push(target, PHYS.DECK_Y - Math.abs(pitch) * 26, pitch);  // 機首下沉時整體也略沉
+            const sink = PHYS.WOBBLE_SINK * Math.abs(pitch) / Math.max(1e-6, amp);
+            push(target, PHYS.DECK_Y - sink, pitch);
         }
         return { slideFrom, wobbleFrom, target };
     };

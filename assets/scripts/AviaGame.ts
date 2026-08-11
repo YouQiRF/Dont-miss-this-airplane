@@ -136,6 +136,40 @@ export class AviaGame extends Component {
     @property({ type: CCInteger, group: G_PATH, tooltip: '最後一個物件的升／降表演長度（tick）,之後交給收尾段' })
     lastArcTicks = 7;
 
+    // ── 甲板降落表演：觸艦 → 減速滑行 → 半截懸空 → 搖晃 → 穩住 or 前傾翻落 ──
+    @property({ type: CCInteger, group: G_PATH, tooltip: '觸艦後減速滑行幾 tick 停下' })
+    slideDecelTicks = 11;
+
+    @property({ type: CCFloat, group: G_PATH, tooltip: '停下時機身中心相對甲板尾端的位移。0 = 剛好半截機身在外' })
+    edgeOverhang = 0;
+
+    @property({ type: CCFloat, group: G_PATH, tooltip: '觸艦點離甲板尾端至少要有這麼多 px,否則當作沒撞到（沒有滑行空間）' })
+    minSlideRoom = 90;
+
+    @property({ type: CCInteger, group: G_PATH, tooltip: '搖晃總長度（tick）。這個值決定快慢 —— 越大越慢' })
+    wobbleTicks = 34;
+
+    @property({ type: CCFloat, group: G_PATH, tooltip: '前傾／抬高的最大角度（度）' })
+    wobbleAmpDeg = 19;
+
+    @property({ type: CCFloat, group: G_PATH, tooltip: '晃幾下（一下 = 前傾一次 + 抬高一次）' })
+    wobbleCycles = 2;
+
+    @property({ type: CCFloat, group: G_PATH, tooltip: '搖晃時機身中心的上下位移。0 = 完全只有轉動,不上下浮' })
+    wobbleSink = 5;
+
+    @property({ type: CCInteger, group: G_PATH, tooltip: '穩住收斂的長度（tick）' })
+    settleTicks = 12;
+
+    @property({ type: CCFloat, group: G_PATH, tooltip: '穩住後停在邊緣的傾角（度,負 = 機首朝下）' })
+    holdPitchDeg = -9;
+
+    @property({ type: CCInteger, group: G_PATH, tooltip: '前傾翻落的長度（tick）' })
+    tipTicks = 13;
+
+    @property({ type: CCFloat, group: G_PATH, tooltip: '翻落時的最終傾角（度）' })
+    tipPitchDeg = -78;
+
     @property({ type: CCInteger, group: G_PATH, tooltip: '第一個物件放在甲板上方幾階' })
     takeoffSteps = 2;
 
@@ -364,6 +398,17 @@ export class AviaGame extends Component {
             ARC_APEX_BIAS: this.arcApexBias,
             ROCKET_DIVE_FRAC: this.rocketDiveFrac,
             LAST_ARC_TICKS: this.lastArcTicks,
+            SLIDE_DECEL_TICKS: this.slideDecelTicks,
+            EDGE_OVERHANG: this.edgeOverhang,
+            MIN_SLIDE_ROOM: this.minSlideRoom,
+            WOBBLE_TICKS: this.wobbleTicks,
+            WOBBLE_AMP_DEG: this.wobbleAmpDeg,
+            WOBBLE_CYCLES: this.wobbleCycles,
+            WOBBLE_SINK: this.wobbleSink,
+            SETTLE_TICKS: this.settleTicks,
+            HOLD_PITCH_DEG: this.holdPitchDeg,
+            TIP_TICKS: this.tipTicks,
+            TIP_PITCH_DEG: this.tipPitchDeg,
             TAKEOFF_STEPS: this.takeoffSteps,
             MIN_ALT: this.minAlt,
             MAX_ALT: this.maxAlt,
