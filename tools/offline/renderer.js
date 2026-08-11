@@ -408,7 +408,8 @@ function onBeat(b) {
             S.shake = 1;
             break;
         case 'LAND': {
-            pushFx('SMOKE', px, CFG.waterScreenY + PHYS.DECK_Y, 0.9, 18, 130, '#ffffff');
+            // 不放煙 —— 觸艦（DECK_TOUCH）那一下已經冒過了，
+            // 這裡飛機早就停穩，再噴一次煙會像憑空冒出來
             S.shake = 0.8;
             const m = s.finalBalance;
             S.big = {

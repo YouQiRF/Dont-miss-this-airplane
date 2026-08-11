@@ -790,8 +790,8 @@ export class AviaView {
                 break;
 
             case 'LAND': {
-                this.pushFx('SMOKE', screenX, waterScreenY + PHYS.DECK_Y, 0.9, 18, 130,
-                    new Color(255, 255, 255, 210));
+                // 不放煙 —— 觸艦（DECK_TOUCH）那一下已經冒過了,
+                // 這裡飛機早就停穩,再噴一次煙會像憑空冒出來
                 this.shake = 0.8;
                 const m = s.finalBalance;
                 const tag = m >= 80 ? 'SUPER MEGA WIN' : m >= 40 ? 'MEGA WIN' : m >= 20 ? 'BIG WIN' : 'LAND!';
