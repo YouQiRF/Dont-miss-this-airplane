@@ -25,6 +25,7 @@ let minTicks = 1e9, maxTicks = 0, sumTicks = 0, n = 0;
 let minObj = 1e9, maxObj = 0, sumObj = 0, sumDecoy = 0;
 let minAlt = 1e9, maxAlt = 0;
 let worstClearance = Infinity;
+const winKinds: Record<string, number> = { DECK_LAND: 0, EDGE_HOLD: 0 };
 
 /** 誘餌與航線的最小距離 —— 必須大於碰撞半徑,否則玩家會看到「明明碰到卻沒吃到」 */
 function decoyClearance(sc: PerformanceScript): number {
@@ -60,14 +61,31 @@ for (const m of POOL) {
         for (let i = 0; i < sc.terminalTick; i++) {
             if (sc.frames[i].y <= 0) { console.error(`✗ ${m}× seed${s} 中途觸水 @${i}`); fail++; break; }
         }
-        // 降落成功必須是 EDGE_HOLD，而且飛機停在甲板尾端（機身中心 = 邊緣，半截在外）
-        if (sc.ending !== 'EDGE_HOLD') {
-            console.error(`✗ ${m}× seed${s} 降落局的結束方式是 ${sc.ending}`); fail++;
-        }
+        // 降落成功有兩種：乾淨停在甲板上，或衝到邊緣半截懸空再穩住
         const endX = sc.frames[sc.terminalTick].x;
-        if (Math.abs(endX - (sc.carrierX + SEA.HALF_W)) > 2) {
-            console.error(`✗ ${m}× seed${s} 停止點 ${endX.toFixed(0)} 不在甲板尾端 ` +
-                `${(sc.carrierX + SEA.HALF_W).toFixed(0)}`); fail++;
+        if (sc.ending === 'EDGE_HOLD') {
+            if (Math.abs(endX - (sc.carrierX + SEA.HALF_W)) > 2) {
+                console.error(`✗ ${m}× seed${s} 停止點 ${endX.toFixed(0)} 不在甲板尾端 ` +
+                    `${(sc.carrierX + SEA.HALF_W).toFixed(0)}`); fail++;
+            }
+            if (sc.wobbleFrom <= sc.slideFrom || sc.wobbleFrom >= sc.terminalTick) {
+                console.error(`✗ ${m}× seed${s} EDGE_HOLD 的 wobbleFrom 不合理`); fail++;
+            }
+        } else if (sc.ending === 'DECK_LAND') {
+            // 必須完全停在甲板上，而且不能有搖晃段
+            if (endX < sc.carrierX - SEA.HALF_W - 2 || endX > sc.carrierX + SEA.HALF_W + 2) {
+                console.error(`✗ ${m}× seed${s} 乾淨降落卻停在甲板外 x=${endX.toFixed(0)}`); fail++;
+            }
+            if (sc.wobbleFrom !== -1) {
+                console.error(`✗ ${m}× seed${s} 乾淨降落不該有搖晃段`); fail++;
+            }
+            for (let t = sc.slideFrom + 1; t <= sc.terminalTick; t++) {
+                if (Math.abs(sc.frames[t].pitch) > 1e-9) {
+                    console.error(`✗ ${m}× seed${s} 乾淨降落在 @${t} 有傾角`); fail++; break;
+                }
+            }
+        } else {
+            console.error(`✗ ${m}× seed${s} 降落局的結束方式是 ${sc.ending}`); fail++;
         }
         if (Math.abs(sc.frames[sc.terminalTick].y - PHYS.DECK_Y) > 1) {
             console.error(`✗ ${m}× seed${s} 降落局終點不在甲板高度`); fail++;
@@ -129,6 +147,7 @@ for (const m of POOL) {
         minObj = Math.min(minObj, hits.length); maxObj = Math.max(maxObj, hits.length);
         sumObj += hits.length; sumDecoy += sc.objects.length - hits.length;
         minAlt = Math.min(minAlt, sc.peakAltitude); maxAlt = Math.max(maxAlt, sc.peakAltitude);
+        winKinds[sc.ending] = (winKinds[sc.ending] ?? 0) + 1;
     }
 }
 
@@ -169,6 +188,8 @@ console.log(`命中物件    ${minObj} – ${maxObj}   平均 ${(sumObj / n).toF
 console.log(`誘餌物件    平均 ${(sumDecoy / n).toFixed(1)} 個`);
 console.log(`最高點      ${minAlt.toFixed(0)} – ${maxAlt.toFixed(0)} px（甲板 ${PHYS.DECK_Y},上方無限制）`);
 console.log(`誘餌最小淨空 ${worstClearance.toFixed(1)}px  (碰撞半徑 ${PHYS.HIT_RADIUS} → 必須大於它)`);
+console.log(`結束方式    乾淨降落 ${winKinds.DECK_LAND}  /  邊緣搖晃後穩住 ${winKinds.EDGE_HOLD}` +
+    `  (邊緣版 ${(winKinds.EDGE_HOLD / n * 100).toFixed(1)}%)`);
 
 console.log('\n══════ 落海局 ══════');
 console.log(`樣本 3000   失敗 ${splashFail}`);

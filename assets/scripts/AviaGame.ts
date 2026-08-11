@@ -12,6 +12,7 @@ import {
 import * as P from './AviaPath';
 import { AviaView } from './AviaView';
 import type { UiButton, ViewConfig } from './AviaView';
+import { AVIA_DEFAULTS } from './AviaDefaults';
 
 const { ccclass, property } = _decorator;
 
@@ -27,7 +28,8 @@ const G_PATH = { name: '④ 航線編排', id: 'path', displayOrder: 4 };
 const G_STY = { name: '⑤ 手感範圍', id: 'sty', displayOrder: 5 };
 const G_SPD = { name: '⑥ 播放速度', id: 'spd', displayOrder: 6 };
 const G_VIS = { name: '⑦ 畫面', id: 'vis', displayOrder: 7 };
-const G_DBG = { name: '⑧ 測試', id: 'dbg', displayOrder: 8 };
+const G_END = { name: '⑧ 結算動畫權重', id: 'end', displayOrder: 8 };
+const G_DBG = { name: '⑨ 測試', id: 'dbg', displayOrder: 9 };
 
 @ccclass('AviaGame')
 export class AviaGame extends Component {
@@ -137,8 +139,20 @@ export class AviaGame extends Component {
     lastArcTicks = 7;
 
     // ── 甲板降落表演：觸艦 → 減速滑行 → 半截懸空 → 搖晃 → 穩住 or 前傾翻落 ──
-    @property({ type: CCInteger, group: G_PATH, tooltip: '觸艦後減速滑行幾 tick 停下' })
+    @property({ type: CCInteger, group: G_PATH, tooltip: '觸艦後減速滑行幾 tick 停下（實際 tick 數會依滑行距離等比縮放）' })
     slideDecelTicks = 11;
+
+    @property({
+        slide: true, range: [0, 1, 0.01], group: G_PATH,
+        tooltip: '贏局走「邊緣半截懸空 + 搖晃」的機率。1 = 每局都驚險；0 = 每局都乾淨停在甲板上',
+    })
+    edgeLandChance = 0.5;
+
+    @property({ slide: true, range: [0, 1, 0.01], group: G_PATH, tooltip: '乾淨降落時停在甲板寬度的哪個比例（下限）。0 = 近端邊緣' })
+    deckStopMin = 0.35;
+
+    @property({ slide: true, range: [0, 1, 0.01], group: G_PATH, tooltip: '乾淨降落的停止位置上限' })
+    deckStopMax = 0.70;
 
     @property({ type: CCFloat, group: G_PATH, tooltip: '停下時機身中心相對甲板尾端的位移。0 = 剛好半截機身在外' })
     edgeOverhang = 0;
@@ -226,6 +240,12 @@ export class AviaGame extends Component {
     @property({ type: CCFloat, group: G_PATH, tooltip: 'HUD 高度條的滿格參考值（純顯示,不是高度上限）' })
     altDisplayMax = 420;
 
+    @property({ type: CCFloat, group: G_PATH, tooltip: '水面的高度基準。改這個等於整體上下平移航線,通常不用動' })
+    waterY = 0;
+
+    @property({ type: CCInteger, group: G_PATH, tooltip: '結束之後多留幾 tick 給演出收尾' })
+    tailTicks = 26;
+
     // ════════════════ ⑤ 手感範圍（每局在區間內隨機。階梯高度不在此列,永遠等高）════════════════
     @property({ type: CCFloat, group: G_STY, tooltip: '物件間距縮放下限（這是唯一的每局隨機項）' }) gapMin = 0.85;
     @property({ type: CCFloat, group: G_STY }) gapMax = 1.20;
@@ -267,6 +287,12 @@ export class AviaGame extends Component {
     @property({ type: CCFloat, group: G_VIS, tooltip: '海面航母的間距（px）。跟目的艦長得一模一樣,整片海會持續有船經過。0 = 關閉' })
     seaCarrierSpacing = 1500;
 
+    @property({ type: CCFloat, group: G_VIS, tooltip: '航母甲板的半寬（px）。同時決定碰撞範圍與「半截懸空」的停止點' })
+    carrierHalfWidth = 152;
+
+    @property({ slide: true, range: [0, 0.6, 0.01], group: G_VIS, tooltip: '海面航母位置的隨機抖動比例,免得排成整齊一列' })
+    seaCarrierJitter = 0.25;
+
     @property({ type: CCFloat, group: G_VIS, tooltip: 'HUD 讀數的單位換算：1 px = 幾個顯示單位。純表演,不影響任何邏輯' })
     metersPerPx = 0.25;
 
@@ -295,7 +321,30 @@ export class AviaGame extends Component {
     @property({ group: G_VIS }) hudAccent = new Color(255, 202, 70, 255);
     @property({ group: G_VIS }) textColor = new Color(255, 255, 255, 255);
 
-    // ════════════════ ⑧ 測試 ════════════════
+    // ════════════════ ⑧ 結算動畫權重 ════════════════
+    /**
+     * 相對權重,0 = 永遠不出現。演算法會為了達成抽到的結局主動安排幾何
+     * （例如把下降段拉長到剛好落在某艘船的甲板上）,所以這幾個數字是真的說了算。
+     *
+     * 唯一例外：EDGE_TIP 需要前方在 glideToDeckMax 距離內有船。
+     * 若 seaCarrierSpacing 設 0 或很大,找不到船時會退回 SPLASH。
+     */
+    @property({ type: CCFloat, group: G_END, tooltip: '【贏】乾淨停在甲板上,不懸空不搖晃' })
+    weightDeckLand = 1;
+
+    @property({ type: CCFloat, group: G_END, tooltip: '【贏】衝到邊緣半截懸空,搖晃兩下後穩住' })
+    weightEdgeHold = 1;
+
+    @property({ type: CCFloat, group: G_END, tooltip: '【輸】直接砸進海裡' })
+    weightSplash = 3;
+
+    @property({ type: CCFloat, group: G_END, tooltip: '【輸】觸艦、搖晃兩下,最後前傾翻落海中' })
+    weightEdgeTip = 1;
+
+    @property({ type: CCInteger, group: G_END, tooltip: '為了湊出「觸艦翻落」,最多可以往前滑幾 tick 去找船' })
+    glideToDeckMax = 70;
+
+    // ════════════════ ⑨ 測試 ════════════════
     @property({ group: G_DBG, tooltip: '打開後忽略離線抽獎,每局都用下面指定的結果' })
     forceResult = false;
 
@@ -310,6 +359,28 @@ export class AviaGame extends Component {
 
     @property({ group: G_DBG, tooltip: '在 Console 印出每局分解出來的物件序列與驗算結果' })
     logRound = true;
+
+    /**
+     * 勾一下就把上面所有欄位設回 AviaDefaults.ts 的預設值,然後自己彈回未勾選。
+     * Cocos 沒有原生的 Inspector 按鈕,用 getter/setter 的 boolean 是標準做法。
+     */
+    @property({ group: G_DBG, tooltip: '勾一下 = 把全部參數還原成預設值（會覆蓋你現在的設定）' })
+    get resetToDefaults() { return false; }
+    set resetToDefaults(v: boolean) { if (v) this.applyDefaults(); }
+
+    /** 把 AVIA_DEFAULTS 的值套回每一個欄位。陣列與顏色會複製一份,不共用參考。 */
+    applyDefaults() {
+        const self = this as unknown as Record<string, unknown>;
+        let n = 0;
+        for (const [k, v] of Object.entries(AVIA_DEFAULTS)) {
+            if (!(k in self)) continue;
+            self[k] = Array.isArray(v) ? [...v]
+                : (v instanceof Color ? v.clone() : v);
+            n++;
+        }
+        console.log(`[Avia] 已還原 ${n} 個參數為預設值`);
+        if (this.gfx) this.pushConfig();
+    }
 
     // ════════════════════════════════════════════════════
     //  執行期
@@ -399,6 +470,9 @@ export class AviaGame extends Component {
             ROCKET_DIVE_FRAC: this.rocketDiveFrac,
             LAST_ARC_TICKS: this.lastArcTicks,
             SLIDE_DECEL_TICKS: this.slideDecelTicks,
+            EDGE_LAND_CHANCE: this.edgeLandChance,
+            DECK_STOP_MIN: Math.min(this.deckStopMin, this.deckStopMax),
+            DECK_STOP_MAX: Math.max(this.deckStopMin, this.deckStopMax),
             EDGE_OVERHANG: this.edgeOverhang,
             MIN_SLIDE_ROOM: this.minSlideRoom,
             WOBBLE_TICKS: this.wobbleTicks,
@@ -433,7 +507,21 @@ export class AviaGame extends Component {
             DECOY_CLEARANCE: Math.max(1.05, this.decoyClearance),
             DECOY_NEAR_MISS: Math.max(1.05, this.decoyNearMiss),
             ALT_DISPLAY_MAX: this.altDisplayMax,
+            WATER_Y: this.waterY,
+            TAIL_TICKS: this.tailTicks,
+            GLIDE_TO_DECK_MAX: this.glideToDeckMax,
             DECK_Y: this.minAlt,
+        });
+        P.configureSea({
+            SPACING: this.seaCarrierSpacing,
+            HALF_W: this.carrierHalfWidth,
+            JITTER: this.seaCarrierJitter,
+        });
+        P.configureEndingWeights({
+            winDeckLand: this.weightDeckLand,
+            winEdgeHold: this.weightEdgeHold,
+            loseSplash: this.weightSplash,
+            loseEdgeTip: this.weightEdgeTip,
         });
         P.configureStyle({
             gapMin: Math.min(this.gapMin, this.gapMax),
