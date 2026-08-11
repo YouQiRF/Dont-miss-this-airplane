@@ -7,12 +7,13 @@
 
 import {
     _decorator, Component, Color, Enum, UITransform, Label,
-    view as ccview, CCFloat, CCInteger, CCString,
+    view as ccview, CCFloat, CCInteger, CCString, Prefab,
 } from 'cc';
 import * as P from './AviaPath';
 import { AviaView } from './AviaView';
 import type { UiButton, ViewConfig } from './AviaView';
 import { AVIA_DEFAULTS } from './AviaDefaults';
+import { ArtKind } from './AviaArt';
 
 const { ccclass, property } = _decorator;
 
@@ -29,7 +30,8 @@ const G_STY = { name: '⑤ 手感範圍', id: 'sty', displayOrder: 5 };
 const G_SPD = { name: '⑥ 播放速度', id: 'spd', displayOrder: 6 };
 const G_VIS = { name: '⑦ 畫面', id: 'vis', displayOrder: 7 };
 const G_END = { name: '⑧ 結算動畫權重', id: 'end', displayOrder: 8 };
-const G_DBG = { name: '⑨ 測試', id: 'dbg', displayOrder: 9 };
+const G_PFB = { name: '⑨ 物件 Prefab', id: 'pfb', displayOrder: 9 };
+const G_DBG = { name: '⑩ 測試', id: 'dbg', displayOrder: 10 };
 
 @ccclass('AviaGame')
 export class AviaGame extends Component {
@@ -344,7 +346,38 @@ export class AviaGame extends Component {
     @property({ type: CCInteger, group: G_END, tooltip: '為了湊出「觸艦翻落」,最多可以往前滑幾 tick 去找船' })
     glideToDeckMax = 70;
 
-    // ════════════════ ⑨ 測試 ════════════════
+    // ════════════════ ⑨ 物件 Prefab ════════════════
+    /**
+     * 每一種物件的外觀都可以換成自己的 Prefab,程式完全不用動。
+     *
+     * 留空 = 用 AviaArt.ts 的預設向量美術（也就是現在看到的樣子）。
+     * assets/prefabs/ 底下有 6 個預設 Prefab,內容就是那份預設美術 ——
+     * 可以直接拉進來當起點,改成 Sprite / Spine / 粒子都行。
+     *
+     * 兩個約定：
+     *   · 節點原點 = 物件中心。航母例外,原點 = 水線（甲板會畫在原點上方 minAlt 處）
+     *   · +N / ×N 的數字：放一個名叫 "value" 的 Label 子節點,遊戲會自動寫入。
+     *     沒有那個子節點也不會出錯（純圖片的 Prefab 就不顯示數字）
+     */
+    @property({ type: Prefab, group: G_PFB, tooltip: '飛機。機首朝右,節點會依航線斜率旋轉' })
+    planePrefab: Prefab | null = null;
+
+    @property({ type: Prefab, group: G_PFB, tooltip: '起飛航母。原點 = 水線,艦島建議放左邊' })
+    carrierPrefab: Prefab | null = null;
+
+    @property({ type: Prefab, group: G_PFB, tooltip: '目的航母（海面上的佈景船目前仍用預設美術繪製）' })
+    carrierDestPrefab: Prefab | null = null;
+
+    @property({ type: Prefab, group: G_PFB, tooltip: '加值物件 +N。放一個名叫 value 的 Label 子節點就會自動帶入數字' })
+    pickupPrefab: Prefab | null = null;
+
+    @property({ type: Prefab, group: G_PFB, tooltip: '乘算物件 ×N。同樣支援 value 子節點' })
+    boostPrefab: Prefab | null = null;
+
+    @property({ type: Prefab, group: G_PFB, tooltip: '飛彈。機首要朝左 —— 它是從畫面右側往左飛過來的' })
+    rocketPrefab: Prefab | null = null;
+
+    // ════════════════ ⑩ 測試 ════════════════
     @property({ group: G_DBG, tooltip: '打開後忽略離線抽獎,每局都用下面指定的結果' })
     forceResult = false;
 
@@ -563,6 +596,14 @@ export class AviaGame extends Component {
             pickupColor: this.pickupColor, boostColor: this.boostColor, rocketColor: this.rocketColor,
             hudColor: this.hudColor, hudAccent: this.hudAccent, textColor: this.textColor,
             carrierColor: this.carrierColor,
+            prefabs: {
+                [ArtKind.Plane]: this.planePrefab,
+                [ArtKind.Carrier]: this.carrierPrefab,
+                [ArtKind.CarrierDest]: this.carrierDestPrefab,
+                [ArtKind.Pickup]: this.pickupPrefab,
+                [ArtKind.Boost]: this.boostPrefab,
+                [ArtKind.Rocket]: this.rocketPrefab,
+            },
             trailLength: this.trailLength,
             trailEnabled: this.trailEnabled,
             shakeIntensity: this.shakeIntensity,

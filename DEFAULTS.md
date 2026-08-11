@@ -1,11 +1,11 @@
 # Inspector 參數預設值
 
-共 **118** 個參數，全部可在 Cocos 的 Inspector 調整。
+共 **124** 個參數，全部可在 Cocos 的 Inspector 調整。
 
 這份文件由 `node tools/gendefaults.js` 從 `AviaGame.ts` 自動產生，改完預設值重跑一次就同步。
 
 **還原預設值**：Inspector 最後一組（⑨ 測試）有一個「還原預設值」勾選框，
-勾一下就把全部 118 個欄位設回這裡的值。
+勾一下就把全部 124 個欄位設回這裡的值。
 
 **驗證覆蓋率**：`node tools/audit-inspector.ts` 會檢查演算法裡每個可設定變數
 是否都真的接進了 Inspector（目前 71/71 全接）。
@@ -165,7 +165,18 @@
 | `weightEdgeTip` | `1` | 【輸】觸艦、搖晃兩下,最後前傾翻落海中 |
 | `glideToDeckMax` | `70` | 為了湊出「觸艦翻落」,最多可以往前滑幾 tick 去找船 |
 
-## ⑨ 測試
+## ⑨ 物件 Prefab
+
+| 參數 | 預設值 | 說明 |
+|---|---|---|
+| `planePrefab` | `null` | 飛機。機首朝右,節點會依航線斜率旋轉 |
+| `carrierPrefab` | `null` | 起飛航母。原點 = 水線,艦島建議放左邊 |
+| `carrierDestPrefab` | `null` | 目的航母（海面上的佈景船目前仍用預設美術繪製） |
+| `pickupPrefab` | `null` | 加值物件 +N。放一個名叫 value 的 Label 子節點就會自動帶入數字 |
+| `boostPrefab` | `null` | 乘算物件 ×N。同樣支援 value 子節點 |
+| `rocketPrefab` | `null` | 飛彈。機首要朝左 —— 它是從畫面右側往左飛過來的 |
+
+## ⑩ 測試
 
 | 參數 | 預設值 | 說明 |
 |---|---|---|

@@ -5,7 +5,12 @@
  * 這一層完全不認識「倍數」「結果」這些概念,它只消費 PerformanceScript。
  */
 
-import { Node, Graphics, Label, UITransform, Color, Vec3, tween, Tween, Layers, UIOpacity } from 'cc';
+import {
+    Node, Graphics, Label, UITransform, Color, Vec3, tween, Tween, Layers, UIOpacity,
+    Prefab, instantiate,
+} from 'cc';
+import { ART, ArtKind, drawCarrier as drawCarrierArt, makeArtNode, setTokenLabel } from './AviaArt';
+import type { ArtPalette } from './AviaArt';
 import { PHYS, SEA, seaCarrierX } from './AviaPath';
 import type { Beat, Frame, ObjKind, PerformanceScript } from './AviaPath';
 
@@ -29,6 +34,12 @@ export interface ViewConfig {
     pickupColor: Color; boostColor: Color; rocketColor: Color;
     hudColor: Color; hudAccent: Color; textColor: Color;
     carrierColor: Color;
+
+    /**
+     * 物件 Prefab。留空 = 用 AviaArt 的預設向量美術。
+     * 指定之後就整個換掉那一種物件的外觀，程式不用動。
+     */
+    prefabs: Partial<Record<ArtKind, Prefab | null>>;
 
     trailLength: number;
     trailEnabled: boolean;
@@ -97,9 +108,35 @@ export class AviaView {
     private targetBalance = 1;
     private sinking = 0;
 
+    private palette!: ArtPalette;
+
     constructor(root: Node, cfg: ViewConfig) {
         this.cfg = cfg;
+        this.palette = {
+            planeBody: cfg.planeBody, planeAccent: cfg.planeAccent,
+            pickup: cfg.pickupColor, boost: cfg.boostColor, rocket: cfg.rocketColor,
+            carrier: cfg.carrierColor, foam: cfg.foam, haze: cfg.skyBottom,
+        };
         this.build(root);
+    }
+
+    /**
+     * 生一個物件節點：有指定 Prefab 就 instantiate，沒有就用預設向量美術。
+     * 兩條路產出的節點介面一致（錨點置中、尺寸已設好），呼叫端不用分辨。
+     */
+    private spawn(parent: Node, name: string, kind: ArtKind): Node {
+        const pf = this.cfg.prefabs?.[kind];
+        let n: Node;
+        if (pf) {
+            n = instantiate(pf);
+            n.name = name;
+            if (!n.getComponent(UITransform)) n.addComponent(UITransform);
+        } else {
+            n = makeArtNode(name, kind, this.palette);
+        }
+        n.layer = Layers.Enum.UI_2D;
+        parent.addChild(n);
+        return n;
     }
 
     // ══════════════════════════════════════════════════════
@@ -136,6 +173,9 @@ export class AviaView {
 
     private build(root: Node) {
         const { W, H } = this.cfg;
+        // 美術層要知道甲板高度與船寬,才能把甲板面畫在正確的地方
+        ART.DECK_Y = PHYS.DECK_Y;
+        ART.CARRIER_HALF_W = SEA.HALF_W;
 
         // stage：把原點搬到左下角,並且是螢幕震動的施力點
         this.stage = new Node('stage');
@@ -152,18 +192,13 @@ export class AviaView {
         this.gShips = this.mkGraphics(this.camRoot, 'seaCarriers');
 
         this.world = this.mk(this.camRoot, 'world');
-        this.carrierA = this.mk(this.world, 'carrierStart', 300, 200);
-        this.carrierB = this.mk(this.world, 'carrierEnd', 300, 200);
-        this.drawCarrier(this.carrierA.addComponent(Graphics), false);
-        this.drawCarrier(this.carrierB.addComponent(Graphics), true);
+        this.carrierA = this.spawn(this.world, 'carrierStart', ArtKind.Carrier);
+        this.carrierB = this.spawn(this.world, 'carrierEnd', ArtKind.CarrierDest);
         this.gDebug = this.mkGraphics(this.world, 'debugPath');
         this.gTrail = this.mkGraphics(this.world, 'trail');
         this.objLayer = this.mk(this.world, 'objects');
 
-        this.plane = this.mk(this.world, 'plane', 90, 60);
-        this.plane.getComponent(UITransform)!.setAnchorPoint(0.5, 0.5);
-        this.gPlane = this.plane.addComponent(Graphics);
-        this.drawPlane(this.gPlane);
+        this.plane = this.spawn(this.world, 'plane', ArtKind.Plane);
 
         this.balanceNode = this.mk(this.world, 'balance', 220, 46);
         this.balanceNode.getComponent(UITransform)!.setAnchorPoint(0.5, 0.5);
@@ -320,9 +355,9 @@ export class AviaView {
      * 所以飛機是真的停在甲板上起飛、也是真的降落在甲板上,不會浮在半空。
      * 船身從水線一路撐到甲板,整座船都在畫面可見範圍內。
      */
-    private drawCarrier(g: Graphics, destination: boolean) {
-        g.clear();
-        this.paintCarrier(g, 0, 0, 1, 0, destination);
+    /** 佈景船仍然畫在單一 Graphics 上（同屏只有 2~3 艘,不值得開節點） */
+    private paintCarrier(cx: number, cy: number, sc: number, haze: number, dest: boolean) {
+        drawCarrierArt(this.gShips, this.palette, cx, cy, sc, haze, dest);
     }
 
     /**
@@ -331,74 +366,6 @@ export class AviaView {
      * @param s      縮放
      * @param haze   0..1 空氣透視,越大越往天空色淡去（遠景船用）
      */
-    private paintCarrier(g: Graphics, cx: number, cy: number, s: number,
-        haze: number, destination: boolean) {
-        const sky = this.cfg.skyBottom;
-        const fade = (c: Color, k = 1) => new Color(
-            Math.round(c.r + (sky.r - c.r) * haze * k),
-            Math.round(c.g + (sky.g - c.g) * haze * k),
-            Math.round(c.b + (sky.b - c.b) * haze * k), 255);
-
-        const base = this.cfg.carrierColor;
-        const c = fade(base);
-        const dark = fade(new Color(Math.round(base.r * 0.55), Math.round(base.g * 0.55), Math.round(base.b * 0.6), 255));
-        const mid = fade(new Color(Math.round(base.r * 0.78), Math.round(base.g * 0.78), Math.round(base.b * 0.82), 255));
-
-        const D = PHYS.DECK_Y * s;      // 甲板面高度（水面 = 0）
-        const deckH = 20 * s;
-        const hullTop = D - deckH;
-        const X = (v: number) => cx + v * s;
-        const Y = (v: number) => cy + v;          // 已經含 s 的值直接用
-
-        // 船身：水線下方一點 → 甲板下緣,往下微收
-        g.fillColor = dark;
-        g.moveTo(X(-152), Y(hullTop)); g.lineTo(X(152), Y(hullTop));
-        g.lineTo(X(124), Y(-34 * s)); g.lineTo(X(-118), Y(-34 * s));
-        g.close(); g.fill();
-        // 船身上半段亮一階,做出量體
-        const bandH = Math.min(46 * s, hullTop * 0.45);
-        g.fillColor = mid;
-        g.rect(X(-152), Y(hullTop - bandH), 304 * s, bandH); g.fill();
-        // 舷側開口
-        if (s > 0.5) {
-            g.fillColor = fade(new Color(18, 26, 38, 255));
-            for (let x = -120; x < 120; x += 42) g.rect(X(x), Y(hullTop - 34 * s), 22 * s, 12 * s);
-            g.fill();
-        }
-
-        // 甲板
-        g.fillColor = c;
-        g.rect(X(-152), Y(hullTop), 304 * s, deckH); g.fill();
-        // 甲板中線
-        g.strokeColor = new Color(255, 255, 255, Math.round(95 * (1 - haze)));
-        g.lineWidth = 3 * s;
-        for (let x = -134; x < 134; x += 34) {
-            g.moveTo(X(x), Y(hullTop + deckH / 2)); g.lineTo(X(x + 18), Y(hullTop + deckH / 2));
-        }
-        g.stroke();
-
-        // 艦島（起飛艦放左邊,目的艦放右邊,才不會擋住降落點）
-        const ix = destination ? 64 : -120;
-        g.fillColor = dark;
-        g.rect(X(ix), Y(D), 48 * s, 46 * s); g.fill();
-        g.fillColor = fade(new Color(255, 210, 90, 255), 0.8);
-        g.rect(X(ix + 8), Y(D + 26 * s), 32 * s, 8 * s); g.fill();
-        g.strokeColor = dark; g.lineWidth = 3 * s;
-        g.moveTo(X(ix + 24), Y(D + 46 * s)); g.lineTo(X(ix + 24), Y(D + 74 * s)); g.stroke();
-
-        // 目的艦：降落導引燈
-        if (destination) {
-            g.fillColor = new Color(120, 255, 180, 220);
-            for (let x = -140; x < 40; x += 30) { g.circle(X(x), Y(D + 6 * s), 4 * s); }
-            g.fill();
-        }
-
-        // 吃水線泡沫
-        const f = this.cfg.foam;
-        g.strokeColor = new Color(f.r, f.g, f.b, Math.round(f.a * (1 - haze * 0.7)));
-        g.lineWidth = 4 * s;
-        g.moveTo(X(-160), Y(2 * s)); g.lineTo(X(160), Y(2 * s)); g.stroke();
-    }
 
     /**
      * 海面上持續出現的航母。
@@ -430,69 +397,11 @@ export class AviaView {
 
             const x = worldX + scroll;
             if (x < -CARRIER_W || x > W + CARRIER_W) continue;
-            this.paintCarrier(g, x, waterScreenY, 1, 0, true);
+            this.paintCarrier(x, waterScreenY, 1, 0, true);   // 佈景船跟目的艦長得一模一樣
         }
     }
 
-    private drawPlane(g: Graphics) {
-        const { planeBody, planeAccent } = this.cfg;
-        g.clear();
-        // 機身
-        g.fillColor = planeBody;
-        g.moveTo(38, 0); g.lineTo(6, 12); g.lineTo(-32, 9);
-        g.lineTo(-36, -6); g.lineTo(6, -10); g.close(); g.fill();
-        // 主翼
-        g.fillColor = planeAccent;
-        g.moveTo(6, 2); g.lineTo(-16, -22); g.lineTo(-2, -22); g.lineTo(14, -1); g.close(); g.fill();
-        g.moveTo(6, 2); g.lineTo(-14, 20); g.lineTo(0, 20); g.lineTo(14, 3); g.close(); g.fill();
-        // 尾翼
-        g.fillColor = planeAccent;
-        g.moveTo(-30, 6); g.lineTo(-40, 26); g.lineTo(-24, 12); g.close(); g.fill();
-        // 座艙罩
-        g.fillColor = new Color(150, 225, 255, 235);
-        g.circle(12, 6, 7); g.fill();
-    }
 
-    private drawObject(g: Graphics, kind: ObjKind) {
-        const { pickupColor, boostColor, rocketColor } = this.cfg;
-        g.clear();
-        if (kind.kind === 'ROCKET') {
-            // 機首朝左 —— 飛彈是從畫面右側往左飛過來的
-            g.fillColor = new Color(rocketColor.r, rocketColor.g, rocketColor.b, 70);
-            g.circle(0, 0, 34); g.fill();
-            g.fillColor = rocketColor;
-            g.moveTo(-26, 0); g.lineTo(-2, 11); g.lineTo(22, 8);
-            g.lineTo(22, -8); g.lineTo(-2, -11); g.close(); g.fill();
-            // 尾鰭
-            g.fillColor = new Color(Math.round(rocketColor.r * 0.7), 40, 40, 255);
-            g.moveTo(22, 8); g.lineTo(30, 18); g.lineTo(30, 2); g.close(); g.fill();
-            g.moveTo(22, -8); g.lineTo(30, -18); g.lineTo(30, -2); g.close(); g.fill();
-            // 尾焰（在右邊,因為往左飛）
-            g.fillColor = new Color(255, 220, 120, 255);
-            g.moveTo(24, 6); g.lineTo(46, 0); g.lineTo(24, -6); g.close(); g.fill();
-            g.fillColor = new Color(255, 150, 60, 190);
-            g.moveTo(30, 4); g.lineTo(62, 0); g.lineTo(30, -4); g.close(); g.fill();
-            return;
-        }
-        const col = kind.kind === 'BOOST' ? boostColor : pickupColor;
-        g.fillColor = new Color(col.r, col.g, col.b, 55);
-        g.circle(0, 0, 36); g.fill();
-        if (kind.kind === 'BOOST') {                       // 六邊形
-            g.fillColor = col;
-            for (let i = 0; i < 6; i++) {
-                const a = (Math.PI / 3) * i - Math.PI / 6;
-                const x = Math.cos(a) * 28, y = Math.sin(a) * 28;
-                if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
-            }
-            g.close(); g.fill();
-        } else {                                           // 圓形
-            g.fillColor = col;
-            g.circle(0, 0, 26); g.fill();
-        }
-        g.strokeColor = new Color(255, 255, 255, 210);
-        g.lineWidth = 3;
-        g.circle(0, 0, kind.kind === 'BOOST' ? 30 : 27); g.stroke();
-    }
 
     // ══════════════════════════════════════════════════════
     //  每局重置
@@ -516,18 +425,23 @@ export class AviaView {
         const { pxPerTick, waterScreenY } = this.cfg;
 
         for (const o of script.objects) {
-            const n = this.mk(this.objLayer, `o${o.id}`, 72, 72);
-            n.getComponent(UITransform)!.setAnchorPoint(0.5, 0.5);
-            const g = n.addComponent(Graphics);
-            this.drawObject(g, o.kind);
+            const kind = o.kind.kind === 'ROCKET' ? ArtKind.Rocket
+                : o.kind.kind === 'BOOST' ? ArtKind.Boost : ArtKind.Pickup;
+            const n = this.spawn(this.objLayer, `o${o.id}`, kind);
             n.setPosition(o.tick * pxPerTick, waterScreenY + o.y);
-            n.addComponent(UIOpacity).opacity = o.hit ? 255 : 205;
+            (n.getComponent(UIOpacity) ?? n.addComponent(UIOpacity)!).opacity = o.hit ? 255 : 205;
 
             if (o.kind.kind !== 'ROCKET') {
-                const l = this.mkLabel(n, 'v', 26, new Color(20, 32, 48, 255), true);
-                l.node.getComponent(UITransform)!.setAnchorPoint(0.5, 0.5);
-                l.node.setPosition(0, 0);
-                l.string = o.kind.kind === 'BOOST' ? `×${o.kind.value}` : `+${o.kind.value}`;
+                const txt = o.kind.kind === 'BOOST' ? `×${o.kind.value}` : `+${o.kind.value}`;
+                // 自訂 Prefab 只要放一個叫 "value" 的 Label 子節點就會自動帶入數字
+                if (this.cfg.prefabs?.[kind]) {
+                    setTokenLabel(n, txt);
+                } else {
+                    const l = this.mkLabel(n, 'value', 26, new Color(20, 32, 48, 255), true);
+                    l.node.getComponent(UITransform)!.setAnchorPoint(0.5, 0.5);
+                    l.node.setPosition(0, 0);
+                    l.string = txt;
+                }
             } else {
                 this.rockets.push({ node: n, baseX: o.tick * pxPerTick, tick: o.tick });
             }

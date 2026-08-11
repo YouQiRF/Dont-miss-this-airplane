@@ -7,7 +7,7 @@
  *     node tools/gendefaults.js
  *
  * 用途：Inspector ⑨ 測試組的「還原預設值」按鈕會把所有欄位設回這裡的值。
- * 參數共 118 個。
+ * 參數共 124 個。
  */
 
 import { Color } from 'cc';
@@ -126,6 +126,12 @@ export const AVIA_DEFAULTS = {
     weightSplash: 3,
     weightEdgeTip: 1,
     glideToDeckMax: 70,
+    planePrefab: null,
+    carrierPrefab: null,
+    carrierDestPrefab: null,
+    pickupPrefab: null,
+    boostPrefab: null,
+    rocketPrefab: null,
     forceResult: false,
     forceLanded: true,
     forceMultiplier: 15,
