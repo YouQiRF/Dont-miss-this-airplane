@@ -7,7 +7,7 @@
  */
 
 // tools/ 不在 assets/ 內,Cocos 不會編譯它,所以可以用 .ts 副檔名讓 node 直接跑
-import { buildPerformance, evaluate, OFFLINE, PHYS, carrierDeckAt } from '../assets/scripts/AviaPath.ts';
+import { buildPerformance, evaluate, OFFLINE, PHYS, SEA, carrierDeckAt } from '../assets/scripts/AviaPath.ts';
 import type { PerformanceScript, RoundResult } from '../assets/scripts/AviaPath.ts';
 
 // ══════════════ 1. 正確性掃描 ══════════════
@@ -60,8 +60,23 @@ for (const m of POOL) {
         for (let i = 0; i < sc.terminalTick; i++) {
             if (sc.frames[i].y <= 0) { console.error(`✗ ${m}× seed${s} 中途觸水 @${i}`); fail++; break; }
         }
-        if (sc.terminalTick !== sc.carrierTick) {
-            console.error(`✗ ${m}× seed${s} 降落局的航母不在降落點`); fail++;
+        // 降落成功必須是 EDGE_HOLD，而且飛機停在甲板尾端（機身中心 = 邊緣，半截在外）
+        if (sc.ending !== 'EDGE_HOLD') {
+            console.error(`✗ ${m}× seed${s} 降落局的結束方式是 ${sc.ending}`); fail++;
+        }
+        const endX = sc.frames[sc.terminalTick].x;
+        if (Math.abs(endX - (sc.carrierX + SEA.HALF_W)) > 2) {
+            console.error(`✗ ${m}× seed${s} 停止點 ${endX.toFixed(0)} 不在甲板尾端 ` +
+                `${(sc.carrierX + SEA.HALF_W).toFixed(0)}`); fail++;
+        }
+        if (Math.abs(sc.frames[sc.terminalTick].y - PHYS.DECK_Y) > 1) {
+            console.error(`✗ ${m}× seed${s} 降落局終點不在甲板高度`); fail++;
+        }
+        // x 必須單調不減（不能倒退飛）
+        for (let t = 1; t <= sc.terminalTick; t++) {
+            if (sc.frames[t].x < sc.frames[t - 1].x - 1e-6) {
+                console.error(`✗ ${m}× seed${s} @${t} x 倒退`); fail++; break;
+            }
         }
         // 終點保證：航線必須有限、有終點、且在上限之內
         if (!Number.isFinite(sc.terminalTick) || sc.terminalTick <= 0) {
@@ -85,8 +100,10 @@ for (const m of POOL) {
             }
         }
         // 飛行規則：除了起飛爬升與命中 +N/×N 的表演,航線任何時刻都必須下降
+        // 收尾段（觸艦彈跳／搖晃）不受此限，那是刻意的表演
+        const flightEnd = sc.slideFrom >= 0 ? sc.slideFrom : sc.terminalTick;
         const inRise = (t: number) => sc.riseWindows.some(w => t >= w.from && t < w.to);
-        for (let t = 0; t < sc.terminalTick; t++) {
+        for (let t = 0; t < flightEnd; t++) {
             if (sc.frames[t + 1].y > sc.frames[t].y + 1e-9 && !inRise(t)) {
                 console.error(`✗ ${m}× seed${s} @${t} 在非命中時段上升 ` +
                     `(${sc.frames[t].y.toFixed(1)} → ${sc.frames[t + 1].y.toFixed(1)})`);
@@ -118,25 +135,29 @@ for (const m of POOL) {
 // 落海局
 let splashFail = 0;
 const splashPos: number[] = [];
-const endKinds: Record<string, number> = { SPLASH: 0, SLIDE_OFF: 0 };
+const endKinds: Record<string, number> = { SPLASH: 0, EDGE_TIP: 0 };
 for (let s = 0; s < 3000; s++) {
     const sc = buildPerformance({ roundId: `L-${s}`, multiplier: 0, landed: false });
     endKinds[sc.ending] = (endKinds[sc.ending] ?? 0) + 1;
-    if (sc.frames[sc.terminalTick].y > 0.001) { splashFail++; continue; }
-    if (sc.carrierTick <= sc.terminalTick) splashFail++;
+    if (sc.frames[sc.terminalTick].y > 0.001) {
+        console.error(`✗ 落海 seed${s} 終點不在水面`); splashFail++; continue;
+    }
+    if (sc.carrierX <= sc.frames[sc.terminalTick].x) {
+        console.error(`✗ 落海 seed${s} 目的艦沒有在墜落點前方`); splashFail++;
+    }
     if (decoyClearance(sc) <= PHYS.HIT_RADIUS) splashFail++;
-    // 觸艦滑行局：目的艦不可以跟被撞的那艘佈景船疊在一起
-    if (sc.ending === 'SLIDE_OFF') {
-        if (sc.slideFrom < 0 || sc.slideFrom >= sc.terminalTick) {
-            console.error(`✗ 落海 seed${s} SLIDE_OFF 但 slideFrom 不合理`); splashFail++;
+    // 觸艦翻落局：必須真的撞到一艘船，而且目的艦不能跟它疊在一起
+    if (sc.ending === 'EDGE_TIP') {
+        if (sc.slideFrom < 0 || sc.wobbleFrom <= sc.slideFrom || sc.wobbleFrom >= sc.terminalTick) {
+            console.error(`✗ 落海 seed${s} EDGE_TIP 的 slideFrom/wobbleFrom 不合理`); splashFail++;
         }
-        const deckX = carrierDeckAt(sc.slideFrom * PHYS.PX_PER_TICK);
+        const deckX = carrierDeckAt(sc.frames[Math.max(0, sc.slideFrom)].x);
         if (deckX === null) { console.error(`✗ 落海 seed${s} 觸艦點下面沒有船`); splashFail++; }
-        else if (Math.abs(sc.carrierTick * PHYS.PX_PER_TICK - deckX) < 300) {
+        else if (Math.abs(sc.carrierX - deckX) < SEA.HALF_W * 2) {
             console.error(`✗ 落海 seed${s} 目的艦跟被撞的船疊在一起`); splashFail++;
         }
     }
-    splashPos.push(sc.terminalTick / sc.carrierTick);
+    splashPos.push(sc.frames[sc.terminalTick].x / sc.carrierX);
 }
 
 console.log('══════ 降落局 ══════');
@@ -151,8 +172,8 @@ console.log(`誘餌最小淨空 ${worstClearance.toFixed(1)}px  (碰撞半徑 ${
 
 console.log('\n══════ 落海局 ══════');
 console.log(`樣本 3000   失敗 ${splashFail}`);
-console.log(`結束方式    直接墜海 ${endKinds.SPLASH}  /  觸艦滑行後翻落 ${endKinds.SLIDE_OFF}` +
-    `  (${(endKinds.SLIDE_OFF / 3000 * 100).toFixed(1)}%)`);
+console.log(`結束方式    直接墜海 ${endKinds.SPLASH}  /  觸艦搖晃後翻落 ${endKinds.EDGE_TIP}` +
+    `  (${(endKinds.EDGE_TIP / 3000 * 100).toFixed(1)}%)`);
 const buckets = new Array(10).fill(0);
 splashPos.forEach(p => buckets[Math.min(9, Math.floor(p * 10))]++);
 console.log('墜海位置分佈（佔航程比例,不該全擠在最後一格）');
@@ -165,18 +186,18 @@ buckets.forEach((c, i) => {
 
 function ascii(sc: PerformanceScript, rows = 24, cols = 112): string {
     const grid: string[][] = Array.from({ length: rows }, () => new Array(cols).fill(' '));
-    const end = Math.max(sc.terminalTick, sc.carrierTick);
+    const end = Math.max(sc.frames[sc.terminalTick].x, sc.carrierX);
     const top = Math.max(PHYS.ALT_DISPLAY_MAX, sc.peakAltitude * 1.05, ...sc.objects.map(o => o.y));
-    const X = (t: number) => Math.min(cols - 1, Math.max(0, Math.round(t / end * (cols - 1))));
+    const X = (worldX: number) => Math.min(cols - 1, Math.max(0, Math.round(worldX / end * (cols - 1))));
     const Y = (y: number) => Math.max(0, Math.min(rows - 1, rows - 1 - Math.round(y / top * (rows - 1))));
 
-    for (let t = 0; t <= sc.terminalTick; t++) grid[Y(sc.frames[t].y)][X(t)] = '·';
+    for (let t = 0; t <= sc.terminalTick; t++) grid[Y(sc.frames[t].y)][X(sc.frames[t].x)] = '·';
     for (const o of sc.objects) {
         const ch = o.kind.kind === 'ROCKET' ? 'R' : o.kind.kind === 'BOOST' ? 'X' : '+';
-        grid[Y(o.y)][X(o.tick)] = o.hit ? ch : ch.toLowerCase();
+        grid[Y(o.y)][X(o.tick * PHYS.PX_PER_TICK)] = o.hit ? ch : ch.toLowerCase();
     }
     grid[Y(PHYS.DECK_Y)][0] = 'A';
-    grid[Y(PHYS.DECK_Y)][X(sc.carrierTick)] = sc.landed ? 'B' : 'b';
+    grid[Y(PHYS.DECK_Y)][X(sc.carrierX)] = sc.landed ? 'B' : 'b';
     return grid.map(r => '│' + r.join('') + '│').join('\n') + '\n└' + '~'.repeat(cols) + '┘';
 }
 
@@ -192,7 +213,7 @@ for (const r of samples) {
         o.kind.kind === 'ROCKET' ? '÷2' : o.kind.kind === 'BOOST' ? `×${o.kind.value}` : `+${o.kind.value}`);
     console.log(`\n══════ ${r.roundId} → ${sc.landed ? '降落' : '落海'} ${sc.finalBalance}× ` +
         `(${sc.terminalTick} tick, 命中 ${seq.length}, 誘餌 ${sc.objects.filter(o => !o.hit).length}, ` +
-        `最高 ${sc.peakAltitude.toFixed(0)}px) ══════`);
+        `最高 ${sc.peakAltitude.toFixed(0)}px, 結束 ${sc.ending}) ══════`);
     console.log(`序列: ${seq.join(' ') || '（無）'}`);
     console.log('大寫=命中 小寫=誘餌  +加值 X乘算 R火箭  A起飛艦 B目的艦');
     console.log(ascii(sc));

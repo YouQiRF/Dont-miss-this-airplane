@@ -33,6 +33,11 @@ const CFG = {
 };
 
 const BET_OPTIONS = [0.1, 0.5, 1, 2, 5, 10, 25, 50, 100];
+/** 自動下注局數選項。最後一個是無限循環 */
+const AUTO_COUNTS = [10, 25, 50, 100, Infinity];
+/** 停止條件金額的級距，單位是「當前下注額的倍數」。0 = 關閉 */
+const STOP_STEPS = [0, 1, 2, 5, 10, 25, 50, 100, 250, 500];
+const AUTO_INTERVAL = 0.5;
 const SPEED_KEYS = ['slow', 'medium', 'fast', 'ultra'];
 const SPEED_LABELS = ['慢', '中', '快', '極快'];
 
@@ -87,7 +92,12 @@ const S = {
     trail: [], fx: [], floats: [],
     consumed: new Set(),      // 已被吃掉的物件 id
     big: null,                // { text, color, t }
-    autoSpin: false,
+    // 自動下注。金額門檻存的是「下注額的倍數」，改下注額會等比縮放。
+    auto: {
+        on: false, countIdx: 0, left: 0, baseBalance: 0,
+        stopAnyWin: false, winIdx: 0, upIdx: 0, downIdx: 0, panel: false,
+    },
+    autoTimer: 0,
 };
 
 const bet = () => BET_OPTIONS[S.betIdx];
@@ -173,7 +183,7 @@ function paintCarrier(cx, waterUp, s, haze, destination) {
 function drawSeaCarriers(scroll) {
     if (SEA.SPACING <= 0) return;
     const W = SEA.HALF_W * 2, gap = SEA.SPACING;
-    const endX = (S.script ? S.script.carrierTick : 30) * PHYS.PX_PER_TICK;
+    const endX = S.script ? S.script.carrierX : 30 * PHYS.PX_PER_TICK;
     const i0 = Math.floor((-scroll - DW * 0.4) / gap) - 1;
     const i1 = Math.ceil((-scroll + DW * 1.4) / gap) + 1;
     for (let i = i0; i <= i1; i++) {
@@ -287,7 +297,7 @@ function drawTrail(scroll) {
     }
 }
 
-function drawHud(frame) {
+function drawHud(fr) {
     const s = S.script;
     const bar = (x, yUp, w, p, col) => {
         ctx.fillStyle = 'rgba(255,255,255,0.13)';
@@ -295,16 +305,16 @@ function drawHud(frame) {
         ctx.fillStyle = col;
         ctx.fillRect(x, up(yUp + 10), Math.max(6, w * clamp(p, 0, 1)), 10);
     };
-    const dist = clamp(S.t / Math.max(1, s.carrierTick), 0, 1);
-    const alt = clamp(frame.y / PHYS.ALT_DISPLAY_MAX, 0, 1);
+    const dist = clamp(fr.x / Math.max(1, s.carrierX), 0, 1);
+    const alt = clamp(fr.y / PHYS.ALT_DISPLAY_MAX, 0, 1);
     bar(150, DH - 47, 210, dist, CFG.accent);
     bar(150, DH - 81, 210, alt, CFG.hud);
 
     const u = CFG.metersPerPx, un = CFG.distanceUnit;
     ctx.font = '20px system-ui,sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
     ctx.fillStyle = CFG.hud;
-    ctx.fillText(`距離 ${fmtLen(S.t * PHYS.PX_PER_TICK * u)} / ${fmtLen(s.carrierTick * PHYS.PX_PER_TICK * u)} ${un}`, 36, up(DH - 42));
-    ctx.fillText(`高度 ${fmtLen(frame.y * u)} ${un}`, 36, up(DH - 76));
+    ctx.fillText(`距離 ${fmtLen(fr.x * u)} / ${fmtLen(s.carrierX * u)} ${un}`, 36, up(DH - 42));
+    ctx.fillText(`高度 ${fmtLen(fr.y * u)} ${un}`, 36, up(DH - 76));
 
     ctx.font = 'bold 40px system-ui,sans-serif'; ctx.textAlign = 'center';
     ctx.fillStyle = S.targetBalance >= 20 ? CFG.accent : CFG.text;
@@ -410,12 +420,17 @@ function onBeat(b) {
             syncUi();
             break;
         }
-        case 'DECK_SLIDE':
-            // 該墜海卻剛好撞上一艘航母 —— 觸艦、擦出火花、開始滑行
-            pushFx('SMOKE', px, CFG.waterScreenY + PHYS.DECK_Y, 1.1, 14, 120, '#ffffff');
+        case 'DECK_TOUCH':
+            // 觸艦：輪胎冒煙 + 火花，開始減速滑行
+            pushFx('SMOKE', px, CFG.waterScreenY + PHYS.DECK_Y, 1.2, 14, 130, '#ffffff');
             pushFx('SPRAY', px, CFG.waterScreenY + PHYS.DECK_Y, 0.5, 8, 90, '#ffd678');
-            S.shake = 0.9;
-            S.big = { text: '停在艦上了…', color: CFG.text, t: 0 };
+            S.shake = 0.7;
+            break;
+
+        case 'DECK_WOBBLE':
+            // 半截機身已經懸在甲板外，開始搖晃 —— 這時還不知道會穩住還是掉下去
+            S.big = { text: '…', color: CFG.text, t: 0 };
+            S.shake = Math.max(S.shake, 0.35);
             break;
 
         case 'SPLASH':
@@ -435,11 +450,12 @@ function onBeat(b) {
 // ══════════════════════════════════════════════════════════
 
 function idleFrame(clock) {
-    return { tick: 0, y: PHYS.DECK_Y + 18 + Math.sin(clock * 2) * 4, vy: 0, pitch: Math.sin(clock * 1.3) * 0.035 };
+    return { tick: 0, x: 0, y: PHYS.DECK_Y + 18 + Math.sin(clock * 2) * 4, vy: 0, pitch: Math.sin(clock * 1.3) * 0.035 };
 }
 
 function spin() {
     if (S.state !== 'IDLE') return;
+    S.auto.panel = false;
     let b = bet();
     if (S.balance < b) {
         const best = BET_OPTIONS.filter(v => v <= S.balance).pop();
@@ -457,6 +473,46 @@ function spin() {
     syncUi();
 }
 
+// ── 自動下注 ──────────────────────────────────────────────
+const stopAmount = idx => (STOP_STEPS[idx] || 0) * bet();
+
+function toggleAuto() {
+    const A = S.auto;
+    if (A.on) { stopAuto('手動停止'); return; }
+    if (S.balance < bet()) { S.info = '餘額不足'; syncUi(); return; }
+    const n = AUTO_COUNTS[A.countIdx];
+    A.on = true;
+    A.left = n === Infinity ? -1 : n;
+    A.baseBalance = S.balance;
+    A.panel = false;
+    S.info = '';
+    syncUi();
+    spin();
+}
+
+function stopAuto(reason) {
+    S.auto.on = false; S.auto.left = 0; S.autoTimer = 0;
+    S.info = '自動下注結束：' + reason;
+    syncUi();
+}
+
+/** 一局結算完檢查停止條件。回傳 true 表示已經停了。 */
+function checkAutoStop() {
+    const A = S.auto;
+    if (!A.on) return true;
+    const win = S.lastWin, delta = S.balance - A.baseBalance;
+    const cash = v => "$" + money(v);
+
+    if (A.stopAnyWin && win > 0) { stopAuto('任何勝利'); return true; }
+    if (A.winIdx > 0 && win >= stopAmount(A.winIdx)) { stopAuto('單次獎金達 ' + cash(win)); return true; }
+    if (A.upIdx > 0 && delta >= stopAmount(A.upIdx)) { stopAuto('餘額增加 ' + cash(delta)); return true; }
+    if (A.downIdx > 0 && -delta >= stopAmount(A.downIdx)) { stopAuto('餘額減少 ' + cash(-delta)); return true; }
+    if (A.left > 0) A.left--;
+    if (A.left === 0) { stopAuto('局數跑完'); return true; }
+    if (S.balance < bet()) { stopAuto('餘額不足'); return true; }
+    return false;
+}
+
 let last = performance.now();
 function frame(now) {
     const dt = Math.min((now - last) / 1000, 0.05);
@@ -464,6 +520,10 @@ function frame(now) {
 
     if (S.state === 'IDLE') {
         render(dt, 0, idleFrame(S.clock), false);
+        if (S.autoTimer > 0) {                       // 自動下注的局間隔
+            S.autoTimer -= dt;
+            if (S.autoTimer <= 0) { S.autoTimer = 0; syncUi(); spin(); }
+        }
     } else {
         const s = S.script, ms = TICK_MS[S.speed];
         if (S.state === 'PLAY') {
@@ -474,8 +534,9 @@ function frame(now) {
             S.endTimer += dt;
             if (S.endTimer >= 1.8) {
                 S.state = 'IDLE'; S.script = null; S.camY = 0; S.sinking = 0;
-                S.consumed.clear(); S.big = null; syncUi();
-                if (S.autoSpin) setTimeout(spin, 400);
+                S.consumed.clear(); S.big = null;
+                if (S.auto.on && !checkAutoStop()) S.autoTimer = AUTO_INTERVAL;
+                else syncUi();
                 requestAnimationFrame(frame); return;
             }
         }
@@ -487,7 +548,8 @@ function frame(now) {
 
 function render(dt, t, fr, playing) {
     const s = S.script;
-    const planeX = t * PHYS.PX_PER_TICK;
+    // x 由腳本給 —— 收尾滑行段飛機會減速停下，不再等速前進
+    const planeX = fr.x;
     const scroll = DW * CFG.planeScreenXRatio - planeX;
 
     if (S.sinking > 0) S.sinking += dt * 46;
@@ -509,7 +571,7 @@ function render(dt, t, fr, playing) {
 
     // 起飛艦與目的艦
     paintCarrier(scroll, CFG.waterScreenY - S.camY, 1, 0, false);
-    paintCarrier((s ? s.carrierTick : 30) * PHYS.PX_PER_TICK + scroll, CFG.waterScreenY - S.camY, 1, 0, true);
+    paintCarrier((s ? s.carrierX : 30 * PHYS.PX_PER_TICK) + scroll, CFG.waterScreenY - S.camY, 1, 0, true);
 
     if (s && CFG.showDebugPath) {
         ctx.strokeStyle = 'rgba(255,255,255,0.25)'; ctx.lineWidth = 2; ctx.beginPath();
@@ -572,6 +634,7 @@ function render(dt, t, fr, playing) {
 // ══════════════════════════════════════════════════════════
 
 let elChips, elSpin, elSpeeds, elBalance, elBet, elWin, elInfo;
+let elAuto, elPanel, elCounts, elConds, elAutoStart;
 
 function buildUi() {
     const ui = document.getElementById('ui');
@@ -584,10 +647,17 @@ function buildUi() {
         <div id="chips"></div>
         <div class="right">
           <div id="speeds"></div>
+          <button id="auto">AUTO</button>
           <button id="spin">SPIN</button>
         </div>
       </div>
-      <div id="info"></div>`;
+      <div id="info"></div>
+      <div id="panel">
+        <h3>自動下注</h3>
+        <div class="prow"><span>局數</span><div id="counts"></div></div>
+        <div id="conds"></div>
+        <button id="autostart">開始自動</button>
+      </div>`;
 
     elChips = document.getElementById('chips');
     elSpeeds = document.getElementById('speeds');
@@ -609,28 +679,91 @@ function buildUi() {
         b.onclick = () => { S.speed = SPEED_KEYS[i]; syncUi(); };
         elSpeeds.appendChild(b);
     });
-    elSpin.onclick = spin;
+    elSpin.onclick = () => { if (S.auto.on) stopAuto('手動停止'); else spin(); };
+
+    // ── 自動下注面板 ──
+    elAuto = document.getElementById('auto');
+    elPanel = document.getElementById('panel');
+    elCounts = document.getElementById('counts');
+    elConds = document.getElementById('conds');
+    elAutoStart = document.getElementById('autostart');
+
+    elAuto.onclick = () => { if (!S.auto.on) { S.auto.panel = !S.auto.panel; syncUi(); } };
+    elAutoStart.onclick = toggleAuto;
+
+    AUTO_COUNTS.forEach((v, i) => {
+        const b = document.createElement('button');
+        b.className = 'cnt';
+        b.textContent = v === Infinity ? '∞' : String(v);
+        b.onclick = () => { if (!S.auto.on) { S.auto.countIdx = i; syncUi(); } };
+        elCounts.appendChild(b);
+    });
+    // 四條停止條件：第一條是開關，其餘點一下就在金額級距上循環
+    [
+        () => { S.auto.stopAnyWin = !S.auto.stopAnyWin; },
+        () => { S.auto.winIdx = (S.auto.winIdx + 1) % STOP_STEPS.length; },
+        () => { S.auto.upIdx = (S.auto.upIdx + 1) % STOP_STEPS.length; },
+        () => { S.auto.downIdx = (S.auto.downIdx + 1) % STOP_STEPS.length; },
+    ].forEach(fn => {
+        const b = document.createElement('button');
+        b.className = 'cond';
+        b.onclick = () => { if (!S.auto.on) { fn(); syncUi(); } };
+        elConds.appendChild(b);
+    });
 
     addEventListener('keydown', e => {
         if (e.code === 'Space') { e.preventDefault(); spin(); }
-        if (e.code === 'KeyA') { S.autoSpin = !S.autoSpin; syncUi(); if (S.autoSpin) spin(); }
+        if (e.code === 'KeyA') { S.auto.panel = !S.auto.panel; syncUi(); }
     });
     syncUi();
 }
 
 function syncUi() {
-    const idle = S.state === 'IDLE';
+    const idle = S.state === "IDLE";
+    const A = S.auto;
+    const cash = v => "$" + money(v);
+
+    // 自動下注期間下注額鎖死，只剩速度能調
     [...elChips.children].forEach((c, i) => {
-        c.classList.toggle('on', i === S.betIdx);
-        c.disabled = !idle;
+        c.classList.toggle("on", i === S.betIdx);
+        c.disabled = !idle || A.on;
     });
-    [...elSpeeds.children].forEach((c, i) => c.classList.toggle('on', SPEED_KEYS[i] === S.speed));
-    elSpin.disabled = !idle;
-    elSpin.textContent = idle ? (S.autoSpin ? 'AUTO' : 'SPIN') : '飛行中';
-    elBalance.textContent = `餘額 $${money(S.balance)}`;
-    elBet.textContent = `　下注 $${trimNum(bet())}`;
-    elWin.textContent = S.lastWin > 0 ? `贏 $${money(S.lastWin)}` : '';
-    elInfo.textContent = S.info;
+    [...elSpeeds.children].forEach((c, i) => c.classList.toggle("on", SPEED_KEYS[i] === S.speed));
+
+    elSpin.disabled = !(A.on || idle);
+    elSpin.textContent = A.on ? "停止" : idle ? "SPIN" : "飛行中";
+    elAuto.classList.toggle("on", A.panel || A.on);
+    elAuto.disabled = A.on;
+    elPanel.style.display = A.panel ? "block" : "none";
+
+    if (A.panel) {
+        [...elCounts.children].forEach((c, i) => {
+            c.classList.toggle("on", i === A.countIdx);
+            c.disabled = A.on;
+        });
+        const amt = i => stopAmount(i) > 0 ? cash(stopAmount(i)) : "關閉";
+        const mark = b => b ? "☑" : "☐";
+        const rows = [
+            [mark(A.stopAnyWin) + "  任何勝利就停", A.stopAnyWin],
+            [mark(A.winIdx > 0) + "  單次獎金 ≥ " + amt(A.winIdx), A.winIdx > 0],
+            [mark(A.upIdx > 0) + "  餘額增加 ≥ " + amt(A.upIdx), A.upIdx > 0],
+            [mark(A.downIdx > 0) + "  餘額減少 ≥ " + amt(A.downIdx), A.downIdx > 0],
+        ];
+        [...elConds.children].forEach((c, i) => {
+            c.textContent = rows[i][0];
+            c.classList.toggle("on", rows[i][1]);
+            c.disabled = A.on;
+        });
+        elAutoStart.textContent = A.on ? "停止自動" : "開始自動";
+        elAutoStart.classList.toggle("on", A.on);
+    }
+
+    elBalance.textContent = "餘額 " + cash(S.balance);
+    elBet.textContent = "　下注 " + "$" + trimNum(bet());
+    elWin.textContent = S.lastWin > 0 ? "贏 " + cash(S.lastWin) : "";
+    elInfo.textContent = A.on
+        ? (A.left < 0 ? "自動 ∞　" : "自動 剩 " + A.left + " 局　") + S.info
+        : S.info;
 }
 
 // ── 啟動 ──────────────────────────────────────────────────

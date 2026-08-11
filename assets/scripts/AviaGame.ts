@@ -48,6 +48,22 @@ export class AviaGame extends Component {
     @property({ group: G_BET, tooltip: '餘額不足時自動降到買得起的最大下注額' })
     autoDowngradeBet = true;
 
+    // ── 自動下注 ──
+    @property({
+        type: [CCInteger], group: G_BET,
+        tooltip: '自動下注的局數選項。有幾個就出現幾顆按鈕；最後一個固定是無限循環（顯示 ∞），數值忽略',
+    })
+    autoCountOptions: number[] = [10, 25, 50, 100, 0];
+
+    @property({
+        type: [CCFloat], group: G_BET,
+        tooltip: '停止條件金額的可選級距（單位：當前下注額的倍數）。第一個 0 = 關閉',
+    })
+    stopAmountSteps: number[] = [0, 1, 2, 5, 10, 25, 50, 100, 250, 500];
+
+    @property({ type: CCFloat, group: G_BET, tooltip: '自動下注每局之間的間隔（秒）' })
+    autoInterval = 0.5;
+
     // ════════════════ ② 符號數值 ════════════════
     @property({ type: [CCFloat], group: G_SYM, tooltip: '加值物件（+N）。想改成 +1/+3/+7 就直接改這裡' })
     pickupValues: number[] = [1, 2, 5, 10];
@@ -279,8 +295,32 @@ export class AviaGame extends Component {
     private lastWin = 0;
     private seq = 0;
 
+    // ── 自動下注狀態 ──
+    /**
+     * 停止條件。全部是「達成就停」,可以同時開好幾個。
+     * 金額類的門檻存的是「當前下注額的倍數」,所以改下注額時門檻會跟著等比縮放。
+     */
+    private auto = {
+        on: false,
+        countIdx: 0,        // autoCountOptions 的索引
+        left: 0,            // 剩餘局數（無限時為 -1）
+        baseBalance: 0,     // 開始自動時的餘額,用來算增減
+        stopAnyWin: false,
+        winIdx: 0,          // 單次獎金 ≥ stopAmountSteps[winIdx] × bet
+        upIdx: 0,           // 餘額增加 ≥ ...
+        downIdx: 0,         // 餘額減少 ≥ ...
+        panel: false,       // 面板開著沒
+    };
+    private autoTimer = 0;
+
     private chips: UiButton[] = [];
     private speedBtns: UiButton[] = [];
+    private autoCountBtns: UiButton[] = [];
+    private autoCondBtns: UiButton[] = [];
+    private autoPanelNodes: UiButton[] = [];
+    private autoBtn!: UiButton;
+    private autoStartBtn!: UiButton;
+    private lblAuto!: Label;
     private spinBtn!: UiButton;
     private lblBalance!: Label;
     private lblBet!: Label;
@@ -417,35 +457,192 @@ export class AviaGame extends Component {
                     this.refreshUi();
                 }));
 
-        // Spin
-        this.spinBtn = g.createButton(W - 150, 74, 200, 76, 'SPIN', 34, () => this.spin());
+        // Spin / AUTO
+        this.spinBtn = g.createButton(W - 150, 74, 200, 76, 'SPIN', 34, () => this.onSpinPressed());
+        this.autoBtn = g.createButton(W - 300, 74, 88, 76, 'AUTO', 20, () => {
+            this.auto.panel = !this.auto.panel;
+            this.refreshUi();
+        });
 
-        // 速度
+        // 速度（自動下注期間唯一還能動的東西）
         this.speedBtns = SPEED_LABELS.map((s, i) =>
             g.createButton(W - 300 + i * 62, 140, 56, 34, s, 17, () => {
                 this.speed = SPEED_KEYS[i];
                 this.refreshUi();
             }));
 
+        this.buildAutoPanel(W, H);
+
         // 讀數
         this.lblBalance = g.createText(30, H - 120, 24, this.hudColor, 'left', true);
         this.lblBet = g.createText(30, H - 152, 20, this.hudColor, 'left');
         this.lblWin = g.createText(W - 30, H - 120, 28, this.hudAccent, 'right', true);
         this.lblInfo = g.createText(W / 2, 122, 18, this.hudColor, 'center');
+        this.lblAuto = g.createText(W - 30, H - 152, 18, this.hudAccent, 'right');
+    }
+
+    /**
+     * 自動下注面板。
+     * 沒有用文字輸入框 —— 金額門檻改成在 stopAmountSteps 級距上點擊循環,
+     * 手機上好按、也不會有輸入驗證問題。門檻是「下注額的倍數」,改下注額會等比縮放。
+     */
+    private buildAutoPanel(W: number, H: number) {
+        const g = this.gfx;
+        const px = W - 470, py = H - 250;      // 面板左下角
+        const row = (i: number) => py + 176 - i * 40;
+
+        this.autoPanelNodes.push(
+            g.createButton(px + 220, py + 226, 440, 34, '自動下注設定', 18, () => { }));
+
+        // 局數
+        const n = this.autoCountOptions.length;
+        const bw = Math.min(80, 430 / Math.max(1, n) - 6);
+        this.autoCountBtns = this.autoCountOptions.map((v, i) => {
+            const last = i === n - 1;
+            return g.createButton(px + 10 + bw / 2 + i * (bw + 6), row(0), bw, 34,
+                last ? '∞' : `${v}`, 17, () => {
+                    if (this.auto.on) return;
+                    this.auto.countIdx = i;
+                    this.refreshUi();
+                });
+        });
+
+        // 停止條件
+        const mk = (i: number, label: string, onClick: () => void) =>
+            g.createButton(px + 220, row(i), 440, 34, label, 16, onClick);
+
+        this.autoCondBtns = [
+            mk(1, '', () => { if (!this.auto.on) { this.auto.stopAnyWin = !this.auto.stopAnyWin; this.refreshUi(); } }),
+            mk(2, '', () => { if (!this.auto.on) { this.cycleStop('winIdx'); } }),
+            mk(3, '', () => { if (!this.auto.on) { this.cycleStop('upIdx'); } }),
+            mk(4, '', () => { if (!this.auto.on) { this.cycleStop('downIdx'); } }),
+        ];
+
+        this.autoStartBtn = g.createButton(px + 220, row(5), 440, 40, '開始自動', 20,
+            () => this.toggleAuto());
+
+        this.autoPanelNodes.push(...this.autoCountBtns, ...this.autoCondBtns, this.autoStartBtn);
+    }
+
+    private cycleStop(key: 'winIdx' | 'upIdx' | 'downIdx') {
+        const steps = this.stopAmountSteps.length || 1;
+        this.auto[key] = (this.auto[key] + 1) % steps;
+        this.refreshUi();
+    }
+
+    /** 門檻金額 = 級距倍數 × 當前下注額。0 = 這條停止條件關閉 */
+    private stopAmount(idx: number) {
+        return (this.stopAmountSteps[idx] ?? 0) * this.bet();
     }
 
     private refreshUi() {
         const bet = this.bet();
+        const idle = this.state === 'IDLE';
+        const A = this.auto;
+        const cur = this.currencySymbol;
+
+        // 自動下注期間：下注額鎖死,只剩速度能調
         this.chips.forEach((c, i) => {
             c.setActive(i === this.betIdx);
-            c.setEnabled(this.state === 'IDLE');
+            c.setEnabled(idle && !A.on);
         });
         this.speedBtns.forEach((b, i) => b.setActive(SPEED_KEYS[i] === this.speed));
-        this.spinBtn.setEnabled(this.state === 'IDLE' && this.balance >= bet);
-        this.spinBtn.setLabel(this.state === 'IDLE' ? 'SPIN' : '飛行中');
-        this.lblBalance.string = `餘額  ${this.currencySymbol}${money(this.balance)}`;
-        this.lblBet.string = `下注  ${this.currencySymbol}${trimNum(bet)}`;
-        this.lblWin.string = this.lastWin > 0 ? `贏  ${this.currencySymbol}${money(this.lastWin)}` : '';
+
+        this.spinBtn.setEnabled(A.on || (idle && this.balance >= bet));
+        this.spinBtn.setLabel(A.on ? '停止' : idle ? 'SPIN' : '飛行中');
+        this.autoBtn.setActive(A.panel || A.on);
+        this.autoBtn.setEnabled(!A.on);
+
+        // ── 面板 ──
+        this.autoPanelNodes.forEach(b => { b.node.active = A.panel; });
+        if (A.panel) {
+            const last = this.autoCountOptions.length - 1;
+            this.autoCountBtns.forEach((b, i) => {
+                b.setActive(i === A.countIdx);
+                b.setEnabled(!A.on);
+            });
+            const amt = (i: number) => this.stopAmount(i) > 0
+                ? `${cur}${money(this.stopAmount(i))}` : '關閉';
+            const on = (b: boolean) => b ? '☑' : '☐';
+
+            this.autoCondBtns[0].setLabel(`${on(A.stopAnyWin)}  任何勝利就停`);
+            this.autoCondBtns[1].setLabel(`${on(A.winIdx > 0)}  單次獎金 ≥ ${amt(A.winIdx)}`);
+            this.autoCondBtns[2].setLabel(`${on(A.upIdx > 0)}  餘額增加 ≥ ${amt(A.upIdx)}`);
+            this.autoCondBtns[3].setLabel(`${on(A.downIdx > 0)}  餘額減少 ≥ ${amt(A.downIdx)}`);
+            this.autoCondBtns[0].setActive(A.stopAnyWin);
+            this.autoCondBtns[1].setActive(A.winIdx > 0);
+            this.autoCondBtns[2].setActive(A.upIdx > 0);
+            this.autoCondBtns[3].setActive(A.downIdx > 0);
+            this.autoCondBtns.forEach(b => b.setEnabled(!A.on));
+
+            this.autoStartBtn.setLabel(A.on ? '停止自動' : '開始自動');
+            this.autoStartBtn.setActive(A.on);
+            this.autoStartBtn.setEnabled(A.on || this.balance >= bet);
+            void last;
+        }
+
+        this.lblBalance.string = `餘額  ${cur}${money(this.balance)}`;
+        this.lblBet.string = `下注  ${cur}${trimNum(bet)}`;
+        this.lblWin.string = this.lastWin > 0 ? `贏  ${cur}${money(this.lastWin)}` : '';
+        this.lblAuto.string = A.on
+            ? (A.left < 0 ? '自動  ∞' : `自動  剩 ${A.left} 局`)
+            : '';
+    }
+
+    // ────────────────────────────────────────────────────
+    //  自動下注
+    // ────────────────────────────────────────────────────
+
+    private onSpinPressed() {
+        if (this.auto.on) { this.stopAuto('手動停止'); return; }
+        this.spin();
+    }
+
+    private toggleAuto() {
+        if (this.auto.on) { this.stopAuto('手動停止'); return; }
+        if (this.balance < this.bet()) { this.lblInfo.string = '餘額不足'; return; }
+
+        const last = this.autoCountOptions.length - 1;
+        const infinite = this.auto.countIdx === last;
+        this.auto.on = true;
+        this.auto.left = infinite ? -1 : Math.max(1, this.autoCountOptions[this.auto.countIdx] | 0);
+        this.auto.baseBalance = this.balance;
+        this.auto.panel = false;
+        this.lblInfo.string = '';
+        this.refreshUi();
+        this.spin();
+    }
+
+    private stopAuto(reason: string) {
+        this.auto.on = false;
+        this.auto.left = 0;
+        this.autoTimer = 0;
+        this.lblInfo.string = `自動下注結束：${reason}`;
+        this.refreshUi();
+    }
+
+    /** 一局結算完之後檢查停止條件。回傳 true 表示已經停了。 */
+    private checkAutoStop(): boolean {
+        const A = this.auto;
+        if (!A.on) return true;
+
+        const win = this.lastWin;
+        const delta = this.balance - A.baseBalance;
+
+        if (A.stopAnyWin && win > 0) { this.stopAuto('任何勝利'); return true; }
+        if (A.winIdx > 0 && win >= this.stopAmount(A.winIdx)) {
+            this.stopAuto(`單次獎金達 ${this.currencySymbol}${money(win)}`); return true;
+        }
+        if (A.upIdx > 0 && delta >= this.stopAmount(A.upIdx)) {
+            this.stopAuto(`餘額增加 ${this.currencySymbol}${money(delta)}`); return true;
+        }
+        if (A.downIdx > 0 && -delta >= this.stopAmount(A.downIdx)) {
+            this.stopAuto(`餘額減少 ${this.currencySymbol}${money(-delta)}`); return true;
+        }
+        if (A.left > 0) A.left--;
+        if (A.left === 0) { this.stopAuto('局數跑完'); return true; }
+        if (this.balance < this.bet()) { this.stopAuto('餘額不足'); return true; }
+        return false;
     }
 
     private bet() { return this.betOptions[this.betIdx] ?? 1; }
@@ -456,6 +653,7 @@ export class AviaGame extends Component {
 
     spin() {
         if (this.state !== 'IDLE') return;
+        this.auto.panel = false;
 
         let bet = this.bet();
         if (this.balance < bet && this.autoDowngradeBet) {
@@ -482,7 +680,8 @@ export class AviaGame extends Component {
             if (!result) {                   // 連線失敗 → 退款,不用本地結果頂替
                 this.balance += bet;
                 this.state = 'IDLE';
-                this.refreshUi();
+                if (this.auto.on) this.stopAuto('連線失敗');
+                else this.refreshUi();
                 return;
             }
             this.startRound(result);
@@ -557,7 +756,7 @@ export class AviaGame extends Component {
                 `  結果      ${s.landed ? '降落' : '落海'}  ${s.finalBalance}×  ` +
                 `結束方式 ${s.ending}  ${s.exact ? '' : '(近似)'}\n` +
                 `  序列      ${seq || '（無物件）'}\n` +
-                `  航程      ${s.terminalTick} tick / 航母在 ${s.carrierTick}（終點必定存在）\n` +
+                `  航程      ${s.terminalTick} tick / 目的艦在 x=${s.carrierX.toFixed(0)}（終點必定存在）\n` +
                 `  物件      命中 ${hits.length} / 誘餌 ${s.objects.length - hits.length}（誘餌保證碰不到）\n` +
                 `  最高點    ${s.peakAltitude.toFixed(0)}px\n` +
                 `  手感      gap=${s.style.gap.toFixed(2)}`);
@@ -571,9 +770,14 @@ export class AviaGame extends Component {
         // state 已經是 PLAY 但 script 還沒回來 → 正式版正在等 server,先維持待機畫面
         if (this.state === 'IDLE' || !this.script) {
             this.gfx.update(dt, 0, this.gfx.idleFrame(this.clock), false);
-            if (this.state === 'IDLE' && this.autoSpin) {
-                this.idleTimer += dt;
-                if (this.idleTimer >= this.autoSpinDelay) { this.idleTimer = 0; this.spin(); }
+            if (this.state === 'IDLE') {
+                if (this.autoTimer > 0) {                    // 自動下注的局間隔
+                    this.autoTimer -= dt;
+                    if (this.autoTimer <= 0) { this.autoTimer = 0; this.refreshUi(); this.spin(); }
+                } else if (this.autoSpin && !this.auto.on) {  // Inspector 的無腦連打（測試用）
+                    this.idleTimer += dt;
+                    if (this.idleTimer >= this.autoSpinDelay) { this.idleTimer = 0; this.spin(); }
+                }
             }
             return;
         }
@@ -598,13 +802,17 @@ export class AviaGame extends Component {
             if (this.t >= s.terminalTick) { this.state = 'END'; this.endTimer = 0; }
         } else {
             this.endTimer += dt;
-            this.t += (dt * 1000) / ms * 0.35;      // 結算時鏡頭緩慢續推
             if (this.endTimer >= this.endHoldSeconds) {
                 this.state = 'IDLE';
                 this.idleTimer = 0;
                 this.script = null;
                 this.gfx.enterIdle();
-                this.refreshUi();
+                // 自動下注：結算完檢查停止條件,沒停就排下一局
+                if (this.auto.on && !this.checkAutoStop()) {
+                    this.autoTimer = this.autoInterval;
+                } else {
+                    this.refreshUi();
+                }
                 return;
             }
         }

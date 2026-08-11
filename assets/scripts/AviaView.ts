@@ -416,7 +416,7 @@ export class AviaView {
         if (seaCarrierSpacing <= 0) return;
 
         const CARRIER_W = SEA.HALF_W * 2;             // 用來判斷會不會疊到
-        const endX = (this.script ? this.script.carrierTick : 30) * pxPerTick;
+        const endX = this.script ? this.script.carrierX : 30 * pxPerTick;
 
         const gap = seaCarrierSpacing;
         const i0 = Math.floor((-scroll - W * 0.4) / gap) - 1;
@@ -535,7 +535,7 @@ export class AviaView {
         }
 
         this.carrierA.setPosition(0, waterScreenY);
-        this.carrierB.setPosition(script.carrierTick * pxPerTick, waterScreenY);
+        this.carrierB.setPosition(script.carrierX, waterScreenY);
 
         this.gDebug.clear();
         if (this.cfg.showDebugPath) {
@@ -566,13 +566,13 @@ export class AviaView {
         this.objNodes.clear();
         this.gDebug.clear();
         this.carrierA.setPosition(0, waterScreenY);
-        this.carrierB.setPosition(30 * pxPerTick, waterScreenY);
+        this.carrierB.setPosition(30 * pxPerTick, waterScreenY);   // 待機時的暫放位置
     }
 
     /** 待機時飛機停在起飛甲板上輕微浮動 */
     idleFrame(clock: number): Frame {
         return {
-            tick: 0,
+            tick: 0, x: 0,
             y: PHYS.DECK_Y + 18 + Math.sin(clock * 2) * 4,
             vy: 0,
             pitch: Math.sin(clock * 1.3) * 0.035,
@@ -588,8 +588,8 @@ export class AviaView {
         const { W, H, pxPerTick, waterScreenY, planeScreenXRatio } = this.cfg;
         const s = this.script;
 
-        // 世界捲動（水平）
-        const planeWorldX = t * pxPerTick;
+        // 世界捲動（水平）。x 由腳本給 —— 收尾滑行段飛機會減速停下,不再等速前進。
+        const planeWorldX = frame.x;
         const scroll = W * planeScreenXRatio - planeWorldX;
         this.world.setPosition(scroll, 0);
 
@@ -718,7 +718,7 @@ export class AviaView {
             g.roundRect(x, y, Math.max(6, w * Math.max(0, Math.min(1, p))), 10, 5); g.fill();
         };
         // 進度條照實際比例畫（不顯示百分比數字）
-        const dist = Math.min(1, t / Math.max(1, s.carrierTick));
+        const dist = Math.min(1, frame.x / Math.max(1, s.carrierX));
         const alt = Math.max(0, Math.min(1, frame.y / PHYS.ALT_DISPLAY_MAX));
         bar(150, H - 47, 210, dist, hudAccent);
         bar(150, H - 81, 210, alt, hudColor);
@@ -726,8 +726,8 @@ export class AviaView {
         // 讀數用實際距離／高度（純表演,單位由 metersPerPx 換算）
         const u = this.cfg.metersPerPx;
         const un = this.cfg.distanceUnit;
-        const flown = t * this.cfg.pxPerTick * u;
-        const total = s.carrierTick * this.cfg.pxPerTick * u;
+        const flown = frame.x * u;
+        const total = s.carrierX * u;
         this.hudDist.string = `距離 ${fmtLen(flown)} / ${fmtLen(total)} ${un}`;
         this.hudAlt.string = `高度 ${fmtLen(frame.y * u)} ${un}`;
         this.hudMult.string = `${fmt(this.shownBalance)}×`;
@@ -799,14 +799,19 @@ export class AviaView {
                 break;
             }
 
-            case 'DECK_SLIDE':
-                // 該墜海卻剛好撞上一艘航母 —— 觸艦、擦出火花、開始滑行
-                this.pushFx('SMOKE', screenX, waterScreenY + PHYS.DECK_Y, 1.1, 14, 120,
+            case 'DECK_TOUCH':
+                // 觸艦：輪胎冒煙 + 火花,開始減速滑行
+                this.pushFx('SMOKE', screenX, waterScreenY + PHYS.DECK_Y, 1.2, 14, 130,
                     new Color(255, 255, 255, 210));
                 this.pushFx('SPRAY', screenX, waterScreenY + PHYS.DECK_Y, 0.5, 8, 90,
                     new Color(255, 214, 120, 255));
-                this.shake = 0.9;
-                this.showBigText('停在艦上了…', this.cfg.textColor);
+                this.shake = 0.7;
+                break;
+
+            case 'DECK_WOBBLE':
+                // 半截機身已經懸在甲板外,開始搖晃 —— 這時還不知道會穩住還是掉下去
+                this.showBigText('…', this.cfg.textColor);
+                this.shake = Math.max(this.shake, 0.35);
                 break;
 
             case 'SPLASH':

@@ -69,6 +69,18 @@ const html = `<!doctype html>
   #spin { padding: 16px 34px; font-size: 24px; font-weight: 800; letter-spacing: .5px; }
   #info { position: absolute; left: 0; right: 0; bottom: 92px; text-align: center;
     font-size: 15px; opacity: .85; }
+  #panel { position: absolute; right: 24px; bottom: 108px; width: 340px;
+    background: rgba(10,22,38,.94); border: 1px solid rgba(255,255,255,.18);
+    border-radius: 14px; padding: 14px; pointer-events: auto; display: none;
+    box-shadow: 0 12px 40px rgba(0,0,0,.5); }
+  #panel h3 { font-size: 15px; margin-bottom: 10px; opacity: .8; font-weight: 600; }
+  .prow { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .prow > span { font-size: 13px; opacity: .7; width: 32px; }
+  #counts { display: flex; gap: 5px; flex: 1; }
+  .cnt { flex: 1; padding: 7px 0; font-size: 14px; }
+  #conds { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+  .cond { padding: 9px 12px; font-size: 14px; text-align: left; }
+  #autostart { width: 100%; padding: 12px; font-size: 17px; font-weight: 700; }
   @media (max-width: 820px) {
     #chips { max-width: 55%; }
     .chip { padding: 6px 9px; font-size: 13px; min-width: 44px; }
