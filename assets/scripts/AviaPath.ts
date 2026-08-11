@@ -176,11 +176,12 @@ export const PHYS = {
     SLIDE_DECEL_TICKS: 11,  // 滑行減速持續幾 tick
     EDGE_OVERHANG: 0,       // 停下時機身中心相對甲板尾端的位移。0 = 剛好半截在外
     MIN_SLIDE_ROOM: 90,     // 觸艦點離甲板尾端至少要有這麼多 px,否則當作沒撞到
-    // 搖晃 = 機身以甲板邊緣為支點「前傾 → 抬高」,重複 WOBBLE_CYCLES 次。
+    // 搖晃 = 機身以甲板邊緣為支點往前傾,再回到水平,重複 WOBBLE_CYCLES 次。
+    // 只會往前傾（機首朝下）—— 往後最多就是水平,不會機首朝上。
     // 不是高頻抖動 —— 慢慢晃兩下就好,那個停頓才是張力所在。
     WOBBLE_TICKS: 34,       // 搖晃總長度。這個值決定快慢：越大越慢
-    WOBBLE_AMP_DEG: 19,     // 前傾／抬高的最大角度
-    WOBBLE_CYCLES: 2,       // 晃幾下（一下 = 前傾一次 + 抬高一次）
+    WOBBLE_AMP_DEG: 19,     // 前傾的最大角度（回來最多到 0,不會變正）
+    WOBBLE_CYCLES: 2,       // 晃幾下（一下 = 前傾下去 + 回到水平）
     WOBBLE_SINK: 5,         // 搖晃時機身中心的上下位移。0 = 完全只有轉動,不上下浮
     SETTLE_TICKS: 12,       // 穩住收斂
     HOLD_PITCH_DEG: -9,     // 穩住後停在邊緣的微傾角
@@ -645,8 +646,10 @@ function appendEnding(
         for (let k = 1; k <= wT; k++) {
             const s = k / wT;
             const decay = 1 - s * 0.55;                              // 慢慢收斂,但沒有完全停
-            // sin 從 0 出發先往負（機首前傾）再轉正（機首抬高）→ 剛好是「晃一下」
-            const pitch = -amp * decay * Math.sin(Math.PI * 2 * PHYS.WOBBLE_CYCLES * s);
+            // (1−cos)/2 永遠落在 0..1 → 傾角永遠 ≤ 0,只會前傾,回來最多回到水平。
+            // 一個完整週期 = 「前傾下去再回到水平」= 晃一下。
+            const w = (1 - Math.cos(Math.PI * 2 * PHYS.WOBBLE_CYCLES * s)) / 2;
+            const pitch = -amp * decay * w;
             const sink = PHYS.WOBBLE_SINK * Math.abs(pitch) / Math.max(1e-6, amp);
             push(target, PHYS.DECK_Y - sink, pitch);
         }
