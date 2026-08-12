@@ -47,6 +47,8 @@ const U = {
   dirScenes: keep('assets/scenes.meta'),
   path: keep('assets/scripts/AviaPath.ts.meta'),
   viewS: keep('assets/scripts/AviaView.ts.meta'),
+  art: keep('assets/scripts/AviaArt.ts.meta'),
+  audio: keep('assets/scripts/AviaAudio.ts.meta'),
   defaults: keep('assets/scripts/AviaDefaults.ts.meta'),
   game: keep('assets/scripts/AviaGame.ts.meta'),
   scene: keep('assets/scenes/game.scene.meta'),
@@ -68,6 +70,8 @@ w('assets/scripts.meta', dirMeta(U.dirScripts));
 w('assets/scenes.meta', dirMeta(U.dirScenes));
 w('assets/scripts/AviaPath.ts.meta', tsMeta(U.path, 'AviaPath.ts'));
 w('assets/scripts/AviaView.ts.meta', tsMeta(U.viewS, 'AviaView.ts'));
+w('assets/scripts/AviaArt.ts.meta', tsMeta(U.art, 'AviaArt.ts'));
+w('assets/scripts/AviaAudio.ts.meta', tsMeta(U.audio, 'AviaAudio.ts'));
 w('assets/scripts/AviaDefaults.ts.meta', tsMeta(U.defaults, 'AviaDefaults.ts'));
 w('assets/scripts/AviaGame.ts.meta', tsMeta(U.game, 'AviaGame.ts'));
 w('assets/scenes/game.scene.meta', {

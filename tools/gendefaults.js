@@ -31,6 +31,14 @@ const SPEED_ENUM = {};
 }
 const deEnum = v => v.replace(/SpeedOption\.(\w+)/g, (_, k) => String(SPEED_ENUM[k] ?? 0));
 
+/**
+ * 資產參考型別（Prefab / AudioClip）不寫進 AVIA_DEFAULTS。
+ * 它們的「預設值」是 null，寫進去等於「還原預設值」會把使用者辛苦拖好的
+ * Prefab 與音檔全部清空 —— 那不是還原，那是刪資料。
+ * 參數表（DEFAULTS.md）還是照列，只是標成「未指定」。
+ */
+const ASSET_TYPES = /type:\s*(Prefab|AudioClip)\b/;
+
 const props = [];
 const re = /@property\(\s*(\{[\s\S]*?\})\s*\)\s*\n?\s*([A-Za-z_]\w*)(?:\s*:\s*[^=]+?)?\s*=\s*([\s\S]*?);\n/g;
 for (const m of SRC.matchAll(re)) {
@@ -42,8 +50,10 @@ for (const m of SRC.matchAll(re)) {
         value: deEnum(rawValue.trim().replace(/\s*\n\s*/g, ' ')),
         group: g ? (groups[g[1]] ?? g[1]) : '（未分組）',
         tip: tip ? tip[1].replace(/\\'/g, "'") : '',
+        asset: ASSET_TYPES.test(opts),
     });
 }
+const resettable = props.filter(p => !p.asset);
 
 if (props.length < 50) {
     console.error(`⚠ 只抓到 ${props.length} 個參數，看起來解析失敗了，沒有寫檔`);
@@ -59,14 +69,17 @@ const ts = `/**
  *
  *     node tools/gendefaults.js
  *
- * 用途：Inspector ⑨ 測試組的「還原預設值」按鈕會把所有欄位設回這裡的值。
- * 參數共 ${props.length} 個。
+ * 用途：Inspector 最後一組「測試」的「還原預設值」按鈕會把所有欄位設回這裡的值。
+ *
+ * 全部 ${props.length} 個參數裡有 ${resettable.length} 個在這裡；
+ * 少掉的 ${props.length - resettable.length} 個是 Prefab / AudioClip 這類資產參考 ——
+ * 它們的預設值是 null，還原時**刻意不碰**，免得一鍵把拖好的美術與音檔清光。
  */
 
 import { Color } from 'cc';
 
 export const AVIA_DEFAULTS = {
-${props.map(p => `    ${p.name}: ${p.value},`).join('\n')}
+${resettable.map(p => `    ${p.name}: ${p.value},`).join('\n')}
 };
 
 export type AviaDefaultKey = keyof typeof AVIA_DEFAULTS;
@@ -77,7 +90,8 @@ fs.writeFileSync(path.join(ROOT, 'assets/scripts/AviaDefaults.ts'), ts, 'utf8');
 const byGroup = {};
 for (const p of props) (byGroup[p.group] ??= []).push(p);
 
-const fmt = v => {
+const fmt = (v, asset) => {
+    if (asset) return '（未指定）';
     const m = v.match(/^new Color\((\d+),\s*(\d+),\s*(\d+),\s*(\d+)\)$/);
     if (m) {
         const hex = '#' + [1, 2, 3].map(i => (+m[i]).toString(16).padStart(2, '0')).join('');
@@ -92,8 +106,10 @@ let md = `# Inspector 參數預設值
 
 這份文件由 \`node tools/gendefaults.js\` 從 \`AviaGame.ts\` 自動產生，改完預設值重跑一次就同步。
 
-**還原預設值**：Inspector 最後一組（⑨ 測試）有一個「還原預設值」勾選框，
-勾一下就把全部 ${props.length} 個欄位設回這裡的值。
+**還原預設值**：Inspector 最後一組（測試）有一個「還原預設值」勾選框，
+勾一下就把 ${resettable.length} 個欄位設回這裡的值。
+標成「（未指定）」的 ${props.length - resettable.length} 個是 Prefab / AudioClip 等資產參考，
+**還原時不會被清空** —— 拖好的美術與音檔不會因為按錯一下就消失。
 
 **驗證覆蓋率**：\`node tools/audit-inspector.ts\` 會檢查演算法裡每個可設定變數
 是否都真的接進了 Inspector（目前 71/71 全接）。
@@ -103,12 +119,12 @@ let md = `# Inspector 參數預設值
 `;
 for (const [g, list] of Object.entries(byGroup)) {
     md += `## ${g}\n\n| 參數 | 預設值 | 說明 |\n|---|---|---|\n`;
-    for (const p of list) md += `| \`${p.name}\` | ${fmt(p.value)} | ${p.tip || '—'} |\n`;
+    for (const p of list) md += `| \`${p.name}\` | ${fmt(p.value, p.asset)} | ${p.tip || '—'} |\n`;
     md += '\n';
 }
 fs.writeFileSync(path.join(ROOT, 'DEFAULTS.md'), md, 'utf8');
 
-console.log(`抓到 ${props.length} 個參數`);
+console.log(`抓到 ${props.length} 個參數（其中 ${props.length - resettable.length} 個是資產參考,不列入還原）`);
 Object.entries(byGroup).forEach(([g, l]) => console.log(`  ${g.padEnd(18)} ${l.length}`));
 console.log('\n已產生  assets/scripts/AviaDefaults.ts');
 console.log('已產生  DEFAULTS.md');

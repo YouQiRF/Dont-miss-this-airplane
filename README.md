@@ -12,16 +12,21 @@
 場景已經建好：`Canvas → GameRoot`,`AviaGame` 組件已掛上,所有參數都在 Inspector。
 設計解析度 1280×720（Project Settings 可改,程式會讀實際 Canvas 尺寸自適應）。
 
-## 三個檔案
+## 五個檔案
 
 | 檔案 | 職責 | 依賴 |
 |---|---|---|
 | `AviaPath.ts` | **航線合成演算法**。結果 → 物件序列 → 航線曲線 → 演出節拍 | 無（不 import `cc`,可單獨在 node 跑） |
-| `AviaView.ts` | **畫面表演**。海浪、雲、天空、鏡頭、航母、飛機、尾煙、物件、特效、HUD、按鈕 | `cc` |
-| `AviaGame.ts` | 組件本體。Inspector 參數、下注、局流程、輸入 | `cc` + 上面兩支 |
+| `AviaView.ts` | **畫面表演**。海浪、雲、天空、鏡頭、航母、飛機、尾煙、物件、特效、HUD、按鈕 | `cc` + 下面兩支 |
+| `AviaArt.ts` | **預設美術**。所有物件的向量畫法,也是 `assets/prefabs/` 那六個 Prefab 的內容 | `cc` |
+| `AviaAudio.ts` | **音效層**。事件 → 聲音。全部留空也能跑,留空 = 那個事件靜音 | `cc` |
+| `AviaGame.ts` | 組件本體。Inspector 參數、下注、局流程、輸入 | `cc` + 上面四支 |
 
 `AviaView` 完全不認識「倍數」「結果」,它只消費 `PerformanceScript`。
 想換成 3D、換成 Spine 骨架、換成別的美術風格,只要重寫 `AviaView`,演算法一行都不用動。
+
+美術與音效又各自從 `AviaView` 再分出去一層：外觀走 Prefab（Inspector ⑨）、
+聲音走 AudioClip（Inspector ⑩）,兩邊都是**沒指定就用內建的、指定了就整個換掉**,不用動程式。
 
 ---
 
@@ -73,7 +78,9 @@ const sag  = Math.min(SAG * style.sag, room * 0.55);
 
 ---
 
-## Inspector 參數（8 組）
+## Inspector 參數（11 組,共 150 個）
+
+完整清單與預設值見 `DEFAULTS.md`（由 `node tools/gendefaults.js` 自動產生）。
 
 | 組 | 重點欄位 |
 |---|---|
@@ -84,7 +91,10 @@ const sag  = Math.min(SAG * style.sag, room * 0.55);
 | ⑤ 手感範圍 | 每局在區間內隨機的只有「間距」與「下垂」。**階梯高度不在此列 —— 它永遠等高** |
 | ⑥ 播放速度 | 四段 tick 毫秒數、預設速度、autoSpin |
 | ⑦ 畫面 | 水面高度、飛機螢幕位置、**鏡頭跟隨**（`camFollowStart` / `camLag`）、尾煙、震動、全部顏色 |
-| ⑧ 測試 | `forceResult` + `forceMultiplier` + `forceLanded` + `forceSeed` + `showDebugPath` |
+| ⑧ 結算動畫權重 | 四種結局的抽中權重：`weightDeckLand` / `weightEdgeHold` / `weightSplash` / `weightEdgeTip` |
+| ⑨ 物件 Prefab | 六種物件的外觀替換。留空 = 用 `AviaArt.ts` 的預設向量美術 |
+| ⑩ 音效 | 19 格 AudioClip（16 顆一次性 + 3 條循環）+ 音量與靜音。**留空 = 那個事件靜音,不會報錯** |
+| ⑪ 測試 | `forceResult` + `forceMultiplier` + `forceLanded` + `forceSeed` + `showDebugPath` + 還原預設值 |
 
 ### 想要什麼就調哪一根
 
@@ -93,10 +103,12 @@ const sag  = Math.min(SAG * style.sag, room * 0.55);
 | 升降幅度再小一點 | ④ `stepUp` / `stepDown` |
 | 場上物件再多一點 | ④ `baseGap` 調小,② `pickupStepTarget` 調大,② `boostChance` 調小 |
 | 誘餌再多一點 | ④ `decoyDensity` |
-| 航線更平直（去掉滑翔起伏） | ④ `sag` 設 0 |
 | 鏡頭更早開始跟 | ⑦ `camFollowStart` 調小 |
 | 限制最高高度 | ④ `maxAlt` 設非 0（代價：碰到上限那幾階會變平,不再等高） |
 | 局再短一點 | ④ `maxRoundTicks` 調小 |
+| 換掉某一種物件的美術 | ⑨ 對應的 Prefab 欄位（可從 `assets/prefabs/` 那六個複製一份改） |
+| 掛音效 | ⑩ 把音檔拖進對應欄位。想先聽單一顆就只掛那一格,其他留空 |
+| 引擎聲太吵 | ⑩ `engineVolume` 調小（它整局都在響,通常要壓比一次性音效低） |
 
 **測試建議**：打開 `forceResult`,把 `forceMultiplier` 設成 250,連按 SPIN ——
 每次都會生出不同的航線,但最後一定是 250×。這就是「結果先決」的直觀驗證。
@@ -114,6 +126,39 @@ BIG / MEGA / SUPER MEGA 分層大字、高度/距離/倍數 HUD。
 
 **垂直鏡頭**：飛機超過畫面高度的 `camFollowStart` 之後,鏡頭開始往上跟,沒有上限。
 海面、物件、特效都掛在 `camRoot` 底下一起移動;天空與雲自己做視差;HUD 與 UI 固定不動。
+
+---
+
+## 音效
+
+**現在沒有任何音檔,而且沒有音檔也完全跑得動** —— 欄位已經接好,音檔到位再一格一格拖進去。
+
+掛法：把 `.mp3` / `.ogg` / `.wav` 丟進 `assets/`,拖進 Inspector ⑩ 對應的欄位。
+開場 Console 會印一行「音效 n/19 已掛載,未掛：…」,一眼就知道還缺哪些。
+
+| 事件 | 欄位 | 什麼時候響 |
+|---|---|---|
+| 按鈕 | `sfxClick` | 除了籌碼與 SPIN 以外的按鈕 |
+| 改下注額 | `sfxBet` | 點籌碼 |
+| 開一局 | `sfxSpin` | **真的開成一局才響** —— 餘額不足按不動時不出聲 |
+| 自動下注 | `sfxAutoStart` / `sfxAutoStop` | 開始／結束（含自己達成停止條件） |
+| 起飛 | `sfxTakeoff` + `loopEngine` 開 | tick 0 |
+| 吃到物件 | `sfxPickup` / `sfxBoost` / `sfxRocket` | 命中 +N / ×N / 飛彈 |
+| 擦身而過 | `sfxNearMiss` | 誘餌掠過。會連發 → 音量自動壓到 55%,再靠 `sfxMinGapMs` 節流 |
+| 目的艦進場 | `sfxReveal` | 結局揭曉前 24 tick |
+| 觸艦 | `sfxDeckTouch` | 輪胎落甲板,開始減速滑行 |
+| 搖晃 | `sfxWobble` | 半截機身懸在甲板外 —— **結局未定的張力點**,適合放持續的緊張音 |
+| 降落 | `sfxLand`（+ `sfxBigWin`） | 成功。≥20× 時兩顆疊著一起播 |
+| 墜海 | `sfxSplash` | 失敗 |
+| 環境 / 音樂 | `loopAmbience` / `loopBgm` | 開場就播,一直播 |
+
+實際音量 = `masterVolume` × 分類音量,一次性音效再乘上事件自己的權重。
+`muted` 只是把音量算成 0,**循環音不會被停掉** —— 取消靜音就直接接回去,不會從頭播。
+
+要換播放方式（例如接第三方音訊引擎),只要換掉 `AviaAudio` 的實作 ——
+表演層只認得 `AudioHooks` 這個 `play` / `loop` 介面,一行都不用動。
+
+> 單檔離線版（`AviaOffline.html`）沒有音效 —— 它是零相依的單一 HTML,沒有地方放音檔。
 
 ---
 

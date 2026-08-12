@@ -6,7 +6,7 @@
 
 專案：`C:\Users\youqichang\avia-cocos`
 引擎：Cocos Creator 3.8.6（`package.json` 的 `creator.version`）
-最後更新：2026-08-10
+最後更新：2026-08-12
 
 ---
 
@@ -18,7 +18,9 @@
 |---|---|
 | 演算法（`AviaPath.ts`） | 完成,8800 局 + 3000 局落海驗證 0 失敗 |
 | 畫面表演（`AviaView.ts`） | 完成,語法/模組解析通過 |
-| 組件與 UI（`AviaGame.ts`） | 完成,8 組 Inspector 參數全開 |
+| 預設美術（`AviaArt.ts`） | 完成,六種物件都能用 Prefab 整個換掉 |
+| 音效層（`AviaAudio.ts`） | **線接好了,音檔還沒有**。19 格全空 = 全程靜音,不影響任何功能 |
+| 組件與 UI（`AviaGame.ts`） | 完成,11 組 / 150 個 Inspector 參數全開 |
 | 場景（`game.scene`） | 已建好,組件已掛上,uuid 對應已用程式核對 |
 | 下注系統 | 完成（可自訂下注額清單、餘額、幣別） |
 | 驗證工具（`tools/verify.ts`） | 完成,`node tools/verify.ts` 直接跑 |
@@ -53,11 +55,17 @@
 ```
 avia-cocos/
 ├ assets/scenes/game.scene          場景（Canvas → Camera + GameRoot）
+├ assets/prefabs/                   六個預設物件 Prefab（內容 = AviaArt 的預設美術）
 ├ assets/scripts/
-│   ├ AviaPath.ts    ← 演算法。改玩法規則來這裡
-│   ├ AviaView.ts    ← 畫面。改美術/鏡頭/特效來這裡
-│   └ AviaGame.ts    ← Inspector 參數 + 下注 + 局流程
+│   ├ AviaPath.ts     ← 演算法。改玩法規則來這裡
+│   ├ AviaView.ts     ← 畫面。改鏡頭/特效/表演節奏來這裡
+│   ├ AviaArt.ts      ← 預設美術。改物件長相來這裡
+│   ├ AviaAudio.ts    ← 音效層。改「什麼時候響」來這裡（音檔掛 Inspector ⑩）
+│   ├ AviaDefaults.ts ← 自動產生的預設值表,別手改
+│   └ AviaGame.ts     ← Inspector 參數 + 下注 + 局流程
 ├ tools/verify.ts                   離線驗證（不需要 Cocos）
+├ tools/gendefaults.js              重生 AviaDefaults.ts 與 DEFAULTS.md
+├ DEFAULTS.md                       全部 150 個參數的預設值表
 ├ README.md                         設計說明與參數對照表
 └ CHANGELOG.md                      這份文件
 ```
@@ -69,7 +77,13 @@ avia-cocos/
 **加新參數的三個步驟**（三處要同步,漏掉會用到舊預設值）：
 1. `AviaPath.ts` 的 `PHYS` / `SYM` / `STYLE_RANGE` 加常數
 2. `AviaGame.ts` 加 `@property` + 在 `pushConfig()` 裡對應
-3. 重生場景（見下方）或在 Inspector 手動設一次
+3. 跑 `node tools/gendefaults.js` 同步預設值表與 `DEFAULTS.md`
+
+**加一顆音效的三個步驟**：
+1. `AviaAudio.ts` 的 `SfxKey` 加一個 key,順便加進 `SFX_KEYS`（開場的已掛載統計會用到）
+2. `AviaGame.ts` 加一格 `@property({ type: AudioClip, group: G_SFX })`,
+   並在 `audioConfig()` 的 `sfx` 裡對應
+3. 在 `AviaView.onBeat()`（或動作發生的地方）呼叫 `this.sfx.play('新key')`
 
 ---
 
@@ -90,6 +104,57 @@ avia-cocos/
 ---
 
 ## 版本歷程
+
+### v0.7 — 2026-08-12 · 音效欄位（只接線,還沒有音檔）
+
+**目標是「以後要掛音效的時候不用改程式」**,所以這一版只做欄位與觸發點,一個音檔都沒有。
+全部留空的狀態下遊戲行為跟上一版完全一樣。
+
+新檔案 `AviaAudio.ts`,結構跟 `AviaArt.ts` 同一個路數 —— 沒掛素材也能跑。
+
+| 東西 | 內容 |
+|---|---|
+| Inspector ⑩ 音效 | 19 格 AudioClip（16 顆一次性 + 3 條循環）+ 5 個音量 + 靜音 + 節流間隔 |
+| 觸發點 | 全部 10 種 `BeatType` 都接上了,另外加上按鈕／改注／開局／自動下注開始結束 |
+| 循環音 | `engine` 起飛開、降落／落海／回待機關;`ambience` 與 `bgm` 開場就播 |
+
+設計上的幾個決定：
+
+- **表演層只認 `AudioHooks`（`play` / `loop` 兩個方法）**,不認得 `AudioSource`。
+  以後要換成第三方音訊引擎,換掉 `AviaAudio` 的實作就好,`AviaView` 一行都不用動。
+- **沒指定音效層時用 `SILENT_AUDIO`**（兩個空函式）,所以 `AviaView` 裡到處都是
+  `this.sfx.play(...)`,沒有一個 null 判斷。
+- **音效綁動作,不綁按鈕**。SPIN 鍵不掛按鈕音 —— 它可能是「開一局」也可能是「停止自動」,
+  而且餘額不足時按不動。所以 `spin` 音是在 `spin()` 通過餘額檢查之後才響的。
+- **`nearMiss` 會連發**（誘餌很密）。音量自動壓到 55%,再加一道 `sfxMinGapMs`（預設 45ms）
+  的節流,同一顆音效在間隔內只留第一下。
+- **靜音不停播放,只把音量算成 0**。取消靜音就直接接回去,循環音不會從頭播。
+- 音檔可以一格一格補,開場 Console 會印「音效 n/19 已掛載,未掛：…」。
+
+**順手修掉的一個地雷**：`AVIA_DEFAULTS` 原本把 `Prefab` 欄位也收進去（值是 `null`),
+所以「還原預設值」會把拖好的 Prefab 全部清空 —— 那不是還原,那是刪資料。
+現在 `gendefaults.js` 會跳過 `Prefab` / `AudioClip` 這類資產參考,
+150 個參數裡有 125 個可還原,25 個資產欄位**還原時不碰**。
+
+離線版（`AviaOffline.html`）沒有音效 —— 它是零相依的單一 HTML,沒有地方放音檔。
+
+---
+
+### v0.6 — 2026-08-11 · 所有物件 Prefab 化,預設美術抽成獨立元件
+
+（這一版當時沒寫紀錄,補記）
+
+預設美術從 `AviaView.ts` 抽成 `AviaArt.ts`,並做成 `assets/prefabs/` 底下六個 Prefab
+（Plane / Carrier / CarrierDest / Pickup / Boost / Rocket）。
+Inspector ⑨ 每一種物件一格,**留空 = 用預設向量美術,指定 = 整個換掉**,程式不用動。
+
+兩個約定：節點原點 = 物件中心（航母例外,原點 = 水線）;
+`+N` / `×N` 的數字放一個叫 `value` 的 Label 子節點就會自動帶入,沒有也不會出錯。
+
+另外：降落成功時不再噴最後那道煙 —— 觸艦（`DECK_TOUCH`）那一下已經冒過了,
+飛機都停穩了再噴一次會像憑空冒出來。
+
+---
 
 ### v0.5 — 2026-08-11 · 自動下注、甲板邊緣搖晃結局
 
@@ -253,9 +318,9 @@ v0.2 的編排方案讓同樣的保證變成一行 `Math.min(..., room * 0.55)`�
 
 ## 下一步候選（還沒做）
 
-- [ ] 音效層（`AviaView.onBeat` 已經是現成的掛載點,每個節拍都有事件）
+- [x] ~~音效層~~ —— v0.7 已接好欄位與觸發點,**只差音檔**（丟進 `assets/` 拖進 Inspector ⑩ 就會響）
 - [ ] 手機直式版面（目前 UI 是為 1280×720 橫式寫死座標,要改成錨點布局）
-- [ ] 物件用 Spine / Sprite 取代 Graphics 向量繪製
+- [ ] 物件用 Spine / Sprite 取代 Graphics 向量繪製 —— 通道已經開好（Inspector ⑨),差素材
 - [ ] Aviamasters 2 的四個 booster（磁鐵 / 雷射 / 氮氣 / 救生圈）
 - [ ] 接真 server（換掉 `AviaPath.ts` 最底下的 `offlineResult()`）
-- [ ] 版本控制：目前**還沒有 git**。要的話跟我說,我幫你 `git init` 並把這份紀錄接上 commit
+- [x] ~~版本控制~~ —— 已經有 git 了,每一版都有 commit

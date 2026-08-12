@@ -2,18 +2,21 @@
  * AviaGame.ts — 主組件。掛在場景裡 Canvas 底下的 GameRoot 節點上。
  *
  * 所有可調參數都是 @property,直接在 Inspector 改,不用動程式。
- * 分成 8 組：下注 / 符號數值 / 離線結果 / 航線編排 / 手感範圍 / 播放速度 / 畫面 / 測試
+ * 分成 11 組：下注 / 符號數值 / 離線結果 / 航線編排 / 手感範圍 / 播放速度 /
+ * 畫面 / 結算動畫權重 / 物件 Prefab / 音效 / 測試
  */
 
 import {
     _decorator, Component, Color, Enum, UITransform, Label,
-    view as ccview, CCFloat, CCInteger, CCString, Prefab,
+    view as ccview, CCFloat, CCInteger, CCString, Prefab, AudioClip,
 } from 'cc';
 import * as P from './AviaPath';
 import { AviaView } from './AviaView';
 import type { UiButton, ViewConfig } from './AviaView';
 import { AVIA_DEFAULTS } from './AviaDefaults';
 import { ArtKind } from './AviaArt';
+import { AviaAudio } from './AviaAudio';
+import type { AudioConfig } from './AviaAudio';
 
 const { ccclass, property } = _decorator;
 
@@ -31,7 +34,8 @@ const G_SPD = { name: '⑥ 播放速度', id: 'spd', displayOrder: 6 };
 const G_VIS = { name: '⑦ 畫面', id: 'vis', displayOrder: 7 };
 const G_END = { name: '⑧ 結算動畫權重', id: 'end', displayOrder: 8 };
 const G_PFB = { name: '⑨ 物件 Prefab', id: 'pfb', displayOrder: 9 };
-const G_DBG = { name: '⑩ 測試', id: 'dbg', displayOrder: 10 };
+const G_SFX = { name: '⑩ 音效', id: 'sfx', displayOrder: 10 };
+const G_DBG = { name: '⑪ 測試', id: 'dbg', displayOrder: 11 };
 
 @ccclass('AviaGame')
 export class AviaGame extends Component {
@@ -377,7 +381,98 @@ export class AviaGame extends Component {
     @property({ type: Prefab, group: G_PFB, tooltip: '飛彈。機首要朝左 —— 它是從畫面右側往左飛過來的' })
     rocketPrefab: Prefab | null = null;
 
-    // ════════════════ ⑩ 測試 ════════════════
+    // ════════════════ ⑩ 音效 ════════════════
+    /**
+     * 每個事件一格,全部留空也能跑 —— 留空的那一格就是靜音,不會報錯。
+     * 所以音檔可以一個一個補,補一個聽一個。
+     *
+     * 掛法：把 .mp3 / .ogg / .wav 丟進 assets/,直接拖進對應的欄位。
+     * 開場 Console 會印一行「音效 n/19 已掛載,未掛：…」,一眼就知道還缺哪些。
+     *
+     * 音量算法： **實際音量 = 主音量 × 分類音量**（一次性音效再乘上事件自己的權重）。
+     * 靜音只是把音量算成 0,循環音不會被停掉 —— 取消靜音就直接接回去,不會從頭播。
+     */
+    @property({ type: CCFloat, group: G_SFX, range: [0, 1, 0.01], slide: true, tooltip: '總音量。所有聲音都會先乘上它' })
+    masterVolume = 1;
+
+    @property({ type: CCFloat, group: G_SFX, range: [0, 1, 0.01], slide: true, tooltip: '一次性音效的音量（下面所有 sfx 欄位）' })
+    sfxVolume = 1;
+
+    @property({ type: CCFloat, group: G_SFX, range: [0, 1, 0.01], slide: true, tooltip: '引擎循環音的音量。它整局都在響,通常要壓比音效低' })
+    engineVolume = 0.55;
+
+    @property({ type: CCFloat, group: G_SFX, range: [0, 1, 0.01], slide: true, tooltip: '環境音（海浪／風）的音量' })
+    ambienceVolume = 0.45;
+
+    @property({ type: CCFloat, group: G_SFX, range: [0, 1, 0.01], slide: true, tooltip: '背景音樂的音量' })
+    bgmVolume = 0.35;
+
+    @property({ group: G_SFX, tooltip: '全部靜音。循環音只是音量歸零,不會被停掉,取消靜音就接回去' })
+    muted = false;
+
+    @property({ type: CCInteger, group: G_SFX, tooltip: '同一顆音效的最短間隔（毫秒）。連發時只留第一下,避免疊成噪音。0 = 不節流' })
+    sfxMinGapMs = 45;
+
+    // ── 一次性音效 ──
+    @property({ type: AudioClip, group: G_SFX, tooltip: '按鈕通用音（籌碼與 SPIN 除外,它們有自己的音）' })
+    sfxClick: AudioClip | null = null;
+
+    @property({ type: AudioClip, group: G_SFX, tooltip: '改下注額' })
+    sfxBet: AudioClip | null = null;
+
+    @property({ type: AudioClip, group: G_SFX, tooltip: '真的開了一局才響 —— 餘額不足按不動時不會出聲' })
+    sfxSpin: AudioClip | null = null;
+
+    @property({ type: AudioClip, group: G_SFX, tooltip: '自動下注開始' })
+    sfxAutoStart: AudioClip | null = null;
+
+    @property({ type: AudioClip, group: G_SFX, tooltip: '自動下注結束（含達成停止條件而自己停）' })
+    sfxAutoStop: AudioClip | null = null;
+
+    @property({ type: AudioClip, group: G_SFX, tooltip: '起飛' })
+    sfxTakeoff: AudioClip | null = null;
+
+    @property({ type: AudioClip, group: G_SFX, tooltip: '吃到 +N' })
+    sfxPickup: AudioClip | null = null;
+
+    @property({ type: AudioClip, group: G_SFX, tooltip: '吃到 ×N' })
+    sfxBoost: AudioClip | null = null;
+
+    @property({ type: AudioClip, group: G_SFX, tooltip: '被飛彈打到 ÷N' })
+    sfxRocket: AudioClip | null = null;
+
+    @property({ type: AudioClip, group: G_SFX, tooltip: '擦身而過的誘餌。會連發,音量已自動壓到 55%,再靠 sfxMinGapMs 節流' })
+    sfxNearMiss: AudioClip | null = null;
+
+    @property({ type: AudioClip, group: G_SFX, tooltip: '目的艦進場（結局揭曉前的那一下）' })
+    sfxReveal: AudioClip | null = null;
+
+    @property({ type: AudioClip, group: G_SFX, tooltip: '輪胎觸艦,開始減速滑行' })
+    sfxDeckTouch: AudioClip | null = null;
+
+    @property({ type: AudioClip, group: G_SFX, tooltip: '半截機身懸在甲板外開始搖晃 —— 結局未定的張力點,適合放持續的緊張音' })
+    sfxWobble: AudioClip | null = null;
+
+    @property({ type: AudioClip, group: G_SFX, tooltip: '降落成功' })
+    sfxLand: AudioClip | null = null;
+
+    @property({ type: AudioClip, group: G_SFX, tooltip: '大獎（≥20×,跟 BIG WIN 字樣同一條門檻）。疊在 sfxLand 上面一起播' })
+    sfxBigWin: AudioClip | null = null;
+
+    @property({ type: AudioClip, group: G_SFX, tooltip: '墜海' })
+    sfxSplash: AudioClip | null = null;
+
+    // ── 循環音 ──
+    @property({ type: AudioClip, group: G_SFX, tooltip: '引擎循環。起飛時自動開,降落／落海／回待機自動關' })
+    loopEngine: AudioClip | null = null;
+
+    @property({ type: AudioClip, group: G_SFX, tooltip: '環境音循環（海浪／風）。開場就播,一直播' })
+    loopAmbience: AudioClip | null = null;
+
+    @property({ type: AudioClip, group: G_SFX, tooltip: '背景音樂循環。開場就播,一直播' })
+    loopBgm: AudioClip | null = null;
+
+    // ════════════════ ⑪ 測試 ════════════════
     @property({ group: G_DBG, tooltip: '打開後忽略離線抽獎,每局都用下面指定的結果' })
     forceResult = false;
 
@@ -420,6 +515,7 @@ export class AviaGame extends Component {
     // ════════════════════════════════════════════════════
 
     private gfx!: AviaView;
+    private audio!: AviaAudio;
     private script: P.PerformanceScript | null = null;
     private state: 'IDLE' | 'PLAY' | 'END' = 'IDLE';
     private t = 0;
@@ -473,6 +569,8 @@ export class AviaGame extends Component {
         const W = this.canvasW(), H = this.canvasH();
         this.node.getComponent(UITransform)?.setContentSize(W, H);
 
+        // 音效層要先建 —— viewConfig() 會把它交給表演層
+        this.audio = new AviaAudio(this.node, this.audioConfig());
         this.gfx = new AviaView(this.node, this.viewConfig(W, H));
         this.balance = this.startingBalance;
         this.betIdx = clamp(this.defaultBetIndex, 0, Math.max(0, this.betOptions.length - 1));
@@ -481,6 +579,13 @@ export class AviaGame extends Component {
         this.buildUi(W, H);
         this.gfx.enterIdle();
         this.refreshUi();
+
+        // 環境音與 BGM 開場就掛上。
+        // 瀏覽器規定使用者操作前不能出聲,所以在網頁上實際會延到玩家第一次點畫面才響。
+        // 萬一某個平台沒有自己接上,在 spin() 裡再呼叫一次同樣這兩行就會補播。
+        this.audio.loop('ambience', true);
+        this.audio.loop('bgm', true);
+        if (this.logRound) console.log('[Avia] ' + this.audio.summary());
     }
 
     /** 把 Inspector 的值推進演算法層。可在執行期再呼叫一次即時套用。 */
@@ -569,6 +674,44 @@ export class AviaGame extends Component {
             biasPower: this.biasPower,
             pool: this.multiplierPool,
         });
+        // 音量／音檔也一起推,所以執行期在 Inspector 拉滑桿、換音檔都會即時生效
+        if (this.audio) this.audio.configure(this.audioConfig());
+    }
+
+    /** Inspector ⑩ 的音效設定打包成音效層看得懂的樣子。全部留空 = 全程靜音。 */
+    private audioConfig(): AudioConfig {
+        return {
+            sfx: {
+                click: this.sfxClick,
+                bet: this.sfxBet,
+                spin: this.sfxSpin,
+                autoStart: this.sfxAutoStart,
+                autoStop: this.sfxAutoStop,
+                takeoff: this.sfxTakeoff,
+                pickup: this.sfxPickup,
+                boost: this.sfxBoost,
+                rocket: this.sfxRocket,
+                nearMiss: this.sfxNearMiss,
+                reveal: this.sfxReveal,
+                deckTouch: this.sfxDeckTouch,
+                wobble: this.sfxWobble,
+                land: this.sfxLand,
+                bigWin: this.sfxBigWin,
+                splash: this.sfxSplash,
+            },
+            loops: {
+                engine: this.loopEngine,
+                ambience: this.loopAmbience,
+                bgm: this.loopBgm,
+            },
+            master: this.masterVolume,
+            sfxVolume: this.sfxVolume,
+            engineVolume: this.engineVolume,
+            ambienceVolume: this.ambienceVolume,
+            bgmVolume: this.bgmVolume,
+            muted: this.muted,
+            minGapMs: this.sfxMinGapMs,
+        };
     }
 
     private canvasW() {
@@ -604,6 +747,7 @@ export class AviaGame extends Component {
                 [ArtKind.Boost]: this.boostPrefab,
                 [ArtKind.Rocket]: this.rocketPrefab,
             },
+            audio: this.audio,
             trailLength: this.trailLength,
             trailEnabled: this.trailEnabled,
             shakeIntensity: this.shakeIntensity,
@@ -629,10 +773,12 @@ export class AviaGame extends Component {
                     if (this.state !== 'IDLE') return;
                     this.betIdx = i;
                     this.refreshUi();
-                }));
+                }, 'bet'));
 
         // Spin / AUTO
-        this.spinBtn = g.createButton(W - 150, 74, 200, 76, 'SPIN', 34, () => this.onSpinPressed());
+        // SPIN 不掛按鈕音 —— 它可能是「開一局」也可能是「停止自動」,由動作自己出聲
+        this.spinBtn = g.createButton(W - 150, 74, 200, 76, 'SPIN', 34,
+            () => this.onSpinPressed(), null);
         this.autoBtn = g.createButton(W - 300, 74, 88, 76, 'AUTO', 20, () => {
             this.auto.panel = !this.auto.panel;
             this.refreshUi();
@@ -665,8 +811,8 @@ export class AviaGame extends Component {
         const px = W - 470, py = H - 250;      // 面板左下角
         const row = (i: number) => py + 176 - i * 40;
 
-        this.autoPanelNodes.push(
-            g.createButton(px + 220, py + 226, 440, 34, '自動下注設定', 18, () => { }));
+        this.autoPanelNodes.push(       // 純標題,點了不做事也不出聲
+            g.createButton(px + 220, py + 226, 440, 34, '自動下注設定', 18, () => { }, null));
 
         // 局數
         const n = this.autoCountOptions.length;
@@ -692,8 +838,9 @@ export class AviaGame extends Component {
             mk(4, '', () => { if (!this.auto.on) { this.cycleStop('downIdx'); } }),
         ];
 
+        // 同上：開始／停止自動由 toggleAuto()、stopAuto() 出聲
         this.autoStartBtn = g.createButton(px + 220, row(5), 440, 40, '開始自動', 20,
-            () => this.toggleAuto());
+            () => this.toggleAuto(), null);
 
         this.autoPanelNodes.push(...this.autoCountBtns, ...this.autoCondBtns, this.autoStartBtn);
     }
@@ -783,6 +930,7 @@ export class AviaGame extends Component {
         this.auto.baseBalance = this.balance;
         this.auto.panel = false;
         this.lblInfo.string = '';
+        this.audio.play('autoStart');
         this.refreshUi();
         this.spin();
     }
@@ -791,6 +939,7 @@ export class AviaGame extends Component {
         this.auto.on = false;
         this.auto.left = 0;
         this.autoTimer = 0;
+        this.audio.play('autoStop');
         this.lblInfo.string = `自動下注結束：${reason}`;
         this.refreshUi();
     }
@@ -843,6 +992,7 @@ export class AviaGame extends Component {
         }
 
         this.pushConfig();                    // 執行期改 Inspector 也能即時生效
+        this.audio.play('spin');              // 這裡才響 —— 上面被餘額擋下來的就不會出聲
 
         this.balance -= bet;
         this.lastWin = 0;

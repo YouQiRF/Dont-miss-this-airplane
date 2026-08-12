@@ -11,6 +11,8 @@ import {
 } from 'cc';
 import { ART, ArtKind, drawCarrier as drawCarrierArt, makeArtNode, setTokenLabel } from './AviaArt';
 import type { ArtPalette } from './AviaArt';
+import { SILENT_AUDIO } from './AviaAudio';
+import type { AudioHooks, SfxKey } from './AviaAudio';
 import { PHYS, SEA, seaCarrierX } from './AviaPath';
 import type { Beat, Frame, ObjKind, PerformanceScript } from './AviaPath';
 
@@ -40,6 +42,12 @@ export interface ViewConfig {
      * 指定之後就整個換掉那一種物件的外觀，程式不用動。
      */
     prefabs: Partial<Record<ArtKind, Prefab | null>>;
+
+    /**
+     * 音效。留空 = 全程靜音（表演層不會因此少做任何事）。
+     * 表演層只透過這個介面出聲，不認得 AudioSource。
+     */
+    audio?: AudioHooks;
 
     trailLength: number;
     trailEnabled: boolean;
@@ -109,9 +117,12 @@ export class AviaView {
     private sinking = 0;
 
     private palette!: ArtPalette;
+    /** 沒指定音效層就是 SILENT_AUDIO，所以下面所有 this.sfx.play() 都不用判斷 null */
+    private sfx: AudioHooks;
 
     constructor(root: Node, cfg: ViewConfig) {
         this.cfg = cfg;
+        this.sfx = cfg.audio ?? SILENT_AUDIO;
         this.palette = {
             planeBody: cfg.planeBody, planeAccent: cfg.planeAccent,
             pickup: cfg.pickupColor, boost: cfg.boostColor, rocket: cfg.rocketColor,
@@ -255,8 +266,12 @@ export class AviaView {
         return l;
     }
 
+    /**
+     * @param sfxKey 按下去要響哪一顆音效。傳 null = 這顆按鈕自己不出聲
+     *               （SPIN／自動下注是由動作本身出聲，不是由按鈕出聲 —— 餘額不足按不動時就不該響）
+     */
     createButton(x: number, y: number, w: number, h: number, text: string,
-        fontSize: number, onClick: () => void): UiButton {
+        fontSize: number, onClick: () => void, sfxKey: SfxKey | null = 'click'): UiButton {
         const n = this.mk(this.uiLayer, 'btn', w, h);
         n.getComponent(UITransform)!.setAnchorPoint(0.5, 0.5);
         n.setPosition(x, y);
@@ -283,6 +298,7 @@ export class AviaView {
 
         n.on(Node.EventType.TOUCH_END, () => {
             if (!st.enabled) return;
+            if (sfxKey) this.sfx.play(sfxKey);
             Tween.stopAllByTarget(n);
             n.setScale(1, 1, 1);
             tween(n).to(0.05, { scale: new Vec3(0.93, 0.93, 1) })
@@ -467,6 +483,7 @@ export class AviaView {
     /** 回到待機：清掉上一局的殘留,把兩艘艦排回預設位置 */
     enterIdle() {
         const { waterScreenY, pxPerTick } = this.cfg;
+        this.sfx.loop('engine', false);   // 中途被打斷（例如自動下注被停）也要保證引擎聲收掉
         this.script = null;
         this.trail.length = 0;
         this.fx.length = 0;
@@ -662,6 +679,8 @@ export class AviaView {
             case 'TAKEOFF':
                 this.pushFx('SMOKE', screenX - 60, waterScreenY + PHYS.DECK_Y, 0.6, 20, 90,
                     new Color(255, 255, 255, 200));
+                this.sfx.play('takeoff');
+                this.sfx.loop('engine', true);      // 引擎聲一路播到降落／落海
                 break;
 
             case 'HIT_PICKUP':
@@ -676,6 +695,7 @@ export class AviaView {
                     boost ? this.cfg.boostColor : this.cfg.pickupColor, boost ? 52 : 40);
                 this.punch(this.balanceNode, boost ? 1.55 : 1.25);
                 if (boost) this.shake = Math.max(this.shake, 0.45);
+                this.sfx.play(boost ? 'boost' : 'pickup');
                 break;
             }
 
@@ -687,9 +707,12 @@ export class AviaView {
                 this.floatText(screenX, worldY + 16, '÷2', this.cfg.rocketColor, 50);
                 this.punch(this.balanceNode, 0.7);
                 this.shake = 1;
+                this.sfx.play('rocket');
                 break;
 
             case 'NEAR_MISS':
+                // 誘餌很密,這顆會連發 —— 音量壓低,再靠 AviaAudio 的 minGapMs 節流
+                this.sfx.play('nearMiss', 0.55);
                 if (node) {
                     Tween.stopAllByTarget(node);
                     tween(node)
@@ -701,6 +724,7 @@ export class AviaView {
 
             case 'ENDGAME_REVEAL':
                 this.punch(this.carrierB, 1.12);
+                this.sfx.play('reveal');
                 break;
 
             case 'LAND': {
@@ -708,8 +732,12 @@ export class AviaView {
                 // 這裡飛機早就停穩,再噴一次煙會像憑空冒出來
                 this.shake = 0.8;
                 const m = s.finalBalance;
-                const tag = m >= 80 ? 'SUPER MEGA WIN' : m >= 40 ? 'MEGA WIN' : m >= 20 ? 'BIG WIN' : 'LAND!';
-                this.showBigText(tag, m >= 20 ? this.cfg.hudAccent : this.cfg.textColor);
+                const big = m >= 20;                 // 大獎門檻：字樣與 bigWin 音效共用同一條線
+                const tag = m >= 80 ? 'SUPER MEGA WIN' : m >= 40 ? 'MEGA WIN' : big ? 'BIG WIN' : 'LAND!';
+                this.showBigText(tag, big ? this.cfg.hudAccent : this.cfg.textColor);
+                this.sfx.loop('engine', false);
+                this.sfx.play('land');
+                if (big) this.sfx.play('bigWin');    // 疊在 land 上面一起播
                 break;
             }
 
@@ -720,12 +748,14 @@ export class AviaView {
                 this.pushFx('SPRAY', screenX, waterScreenY + PHYS.DECK_Y, 0.5, 8, 90,
                     new Color(255, 214, 120, 255));
                 this.shake = 0.7;
+                this.sfx.play('deckTouch');
                 break;
 
             case 'DECK_WOBBLE':
                 // 半截機身已經懸在甲板外,開始搖晃 —— 這時還不知道會穩住還是掉下去
                 this.showBigText('…', this.cfg.textColor);
                 this.shake = Math.max(this.shake, 0.35);
+                this.sfx.play('wobble');
                 break;
 
             case 'SPLASH':
@@ -735,6 +765,8 @@ export class AviaView {
                 this.pushFx('SPRAY', screenX, waterScreenY + 10, 0.9, 8, 210, this.cfg.foam);
                 this.targetBalance = 0;
                 this.showBigText('SPLASH', new Color(255, 120, 120, 255));
+                this.sfx.loop('engine', false);
+                this.sfx.play('splash');
                 break;
         }
     }

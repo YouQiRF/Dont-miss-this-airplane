@@ -8,7 +8,7 @@
  *
  * 想換美術有兩條路：
  *   · 改這裡的畫法（全部一起換）
- *   · 在 AviaGame 的 ⑩ 物件 Prefab 指定自己的 Prefab（個別替換，不用動程式）
+ *   · 在 AviaGame 的 ⑨ 物件 Prefab 指定自己的 Prefab（個別替換，不用動程式）
  */
 
 import { _decorator, Component, Graphics, Color, Label, Node, UITransform, Layers, Enum } from 'cc';

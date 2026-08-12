@@ -6,8 +6,11 @@
  *
  *     node tools/gendefaults.js
  *
- * 用途：Inspector ⑨ 測試組的「還原預設值」按鈕會把所有欄位設回這裡的值。
- * 參數共 124 個。
+ * 用途：Inspector 最後一組「測試」的「還原預設值」按鈕會把所有欄位設回這裡的值。
+ *
+ * 全部 150 個參數裡有 125 個在這裡；
+ * 少掉的 25 個是 Prefab / AudioClip 這類資產參考 ——
+ * 它們的預設值是 null，還原時**刻意不碰**，免得一鍵把拖好的美術與音檔清光。
  */
 
 import { Color } from 'cc';
@@ -126,12 +129,13 @@ export const AVIA_DEFAULTS = {
     weightSplash: 3,
     weightEdgeTip: 1,
     glideToDeckMax: 70,
-    planePrefab: null,
-    carrierPrefab: null,
-    carrierDestPrefab: null,
-    pickupPrefab: null,
-    boostPrefab: null,
-    rocketPrefab: null,
+    masterVolume: 1,
+    sfxVolume: 1,
+    engineVolume: 0.55,
+    ambienceVolume: 0.45,
+    bgmVolume: 0.35,
+    muted: false,
+    sfxMinGapMs: 45,
     forceResult: false,
     forceLanded: true,
     forceMultiplier: 15,
