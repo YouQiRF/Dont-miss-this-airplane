@@ -78,17 +78,17 @@ const sag  = Math.min(SAG * style.sag, room * 0.55);
 
 ---
 
-## Inspector 參數（11 組,共 150 個）
+## Inspector 參數（11 組,共 151 個）
 
 完整清單與預設值見 `DEFAULTS.md`（由 `node tools/gendefaults.js` 自動產生）。
 
 | 組 | 重點欄位 |
 |---|---|
-| ① 下注 | `betOptions` 下注額清單（有幾個就出現幾顆籌碼）、`startingBalance`、`currencySymbol` |
+| ① 下注 | `betOptions` 下注額清單（`−` / `＋` 步進器循環走這個清單）、`autoCountMax`（自訂局數上限）、`startingBalance`、`currencySymbol` |
 | ② 符號數值 | `pickupValues` `+N` 清單、`boostValues` `×N` 清單、`rocketDivisor`、`pickupStepTarget`（調高 → 物件更多） |
 | ③ 離線結果 | `winChance`、`multiplierPool`、`biasPower` |
-| ④ 航線編排 | `stepUp` / `stepDown`（**等高階梯的階距**）、`sag`、`baseGap`（**物件密度**）、`maxAlt`（0 = 不封頂）、`maxRoundTicks`（**終點上限**）、`decoyDensity` / `decoyClearance` |
-| ⑤ 手感範圍 | 每局在區間內隨機的只有「間距」與「下垂」。**階梯高度不在此列 —— 它永遠等高** |
+| ④ 航線編排 | `stepUp` / `stepDown`（**等高階梯的階距**）、`baseGap`（**物件密度**）、`maxAlt`（0 = 不封頂）、`maxRoundTicks`（**終點上限**）、`decoyDensity` / `decoyClearance` |
+| ⑤ 手感範圍 | 每局在區間內隨機的只有「間距」。**階梯高度不在此列 —— 它永遠等高** |
 | ⑥ 播放速度 | 四段 tick 毫秒數、預設速度、autoSpin |
 | ⑦ 畫面 | 水面高度、飛機螢幕位置、**鏡頭跟隨**（`camFollowStart` / `camLag`）、尾煙、震動、全部顏色 |
 | ⑧ 結算動畫權重 | 四種結局的抽中權重：`weightDeckLand` / `weightEdgeHold` / `weightSplash` / `weightEdgeTip` |
@@ -127,6 +127,25 @@ BIG / MEGA / SUPER MEGA 分層大字、高度/距離/倍數 HUD。
 **垂直鏡頭**：飛機超過畫面高度的 `camFollowStart` 之後,鏡頭開始往上跟,沒有上限。
 海面、物件、特效都掛在 `camRoot` 底下一起移動;天空與雲自己做視差;HUD 與 UI 固定不動。
 
+### 下方 bar
+
+```
+[ −   $1   ＋ ]                         [ 速度 中 ▴ ] [ AUTO ] [  SPIN  ]
+  下注步進器                              選單（往上開）
+```
+
+- **下注**：`−` / `＋` 在 `betOptions` 上走一階,**兩頭都循環** ——
+  最小額按 − 跳到最大,最大額按 ＋ 回到最小,不會有按到底沒反應的死角
+- **速度**：點一下往上展開四個選項,**選完自動收起來**
+- **AUTO**：開自動下注面板。速度選單與自動面板互斥,開一個會關掉另一個
+
+自動下注面板分「局數」與「停止條件」兩節。局數除了預設值與 ∞,還有一格
+**自訂** —— 玩家自己填,上限 `autoCountMax`（預設 99）。
+沒填數字就不讓按「開始自動」,按鈕會直接變灰。
+
+> 自訂輸入的做法兩版不同：離線版用瀏覽器原生的 `<input type=number>`;
+> Cocos 版用自己拼的數字鍵盤,因為 `EditBox` 需要 Sprite 背景圖,而這專案是零素材全向量繪製。
+
 ---
 
 ## 音效
@@ -138,8 +157,8 @@ BIG / MEGA / SUPER MEGA 分層大字、高度/距離/倍數 HUD。
 
 | 事件 | 欄位 | 什麼時候響 |
 |---|---|---|
-| 按鈕 | `sfxClick` | 除了籌碼與 SPIN 以外的按鈕 |
-| 改下注額 | `sfxBet` | 點籌碼 |
+| 按鈕 | `sfxClick` | 除了下注步進器與 SPIN 以外的按鈕 |
+| 改下注額 | `sfxBet` | 按下注的 − / ＋ |
 | 開一局 | `sfxSpin` | **真的開成一局才響** —— 餘額不足按不動時不出聲 |
 | 自動下注 | `sfxAutoStart` / `sfxAutoStop` | 開始／結束（含自己達成停止條件） |
 | 起飛 | `sfxTakeoff` + `loopEngine` 開 | tick 0 |

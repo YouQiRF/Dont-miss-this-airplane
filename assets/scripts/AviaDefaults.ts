@@ -8,7 +8,7 @@
  *
  * 用途：Inspector 最後一組「測試」的「還原預設值」按鈕會把所有欄位設回這裡的值。
  *
- * 全部 150 個參數裡有 125 個在這裡；
+ * 全部 151 個參數裡有 126 個在這裡；
  * 少掉的 25 個是 Prefab / AudioClip 這類資產參考 ——
  * 它們的預設值是 null，還原時**刻意不碰**，免得一鍵把拖好的美術與音檔清光。
  */
@@ -22,6 +22,7 @@ export const AVIA_DEFAULTS = {
     currencySymbol: '$',
     autoDowngradeBet: true,
     autoCountOptions: [10, 25, 50, 100, 0],
+    autoCountMax: 99,
     stopAmountSteps: [0, 1, 2, 5, 10, 25, 50, 100, 250, 500],
     autoInterval: 0.5,
     pickupValues: [1, 2, 5, 10],

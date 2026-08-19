@@ -54,9 +54,22 @@ const html = `<!doctype html>
   #bal { font-size: 20px; color: #eaf4ff; }
   #betl { opacity: .75; }
   #win { font-size: 22px; font-weight: 700; color: #ffca46; }
-  #chips { display: flex; gap: 6px; flex-wrap: wrap; max-width: 62%; pointer-events: auto; }
+  /* 下注器：−  金額  ＋（金額本身不可點，只有兩顆鍵） */
+  #stepper { display: flex; align-items: center; gap: 4px; pointer-events: auto;
+    background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.20);
+    border-radius: 12px; padding: 4px; }
+  .step { width: 44px; height: 40px; font-size: 22px; line-height: 1; }
+  #betval { min-width: 96px; text-align: center; font-size: 20px; font-weight: 700;
+    color: #eaf4ff; font-variant-numeric: tabular-nums; }
   .right { display: flex; align-items: center; gap: 10px; pointer-events: auto; }
-  #speeds { display: flex; gap: 5px; }
+  /* 速度選單：往上展開，選完就收 */
+  #speedwrap { position: relative; }
+  #speedbtn { padding: 9px 14px; font-size: 14px; white-space: nowrap; }
+  #auto { padding: 11px 16px; font-size: 15px; letter-spacing: .04em; }
+  #speeds { display: none; flex-direction: column; gap: 4px;
+    position: absolute; bottom: calc(100% + 6px); left: 0; right: 0;
+    background: rgba(10,22,38,.96); border: 1px solid rgba(255,255,255,.18);
+    border-radius: 12px; padding: 5px; box-shadow: 0 10px 30px rgba(0,0,0,.5); }
   button { font: inherit; color: #dceaf8; cursor: pointer;
     background: rgba(255,255,255,.10); border: 1px solid rgba(255,255,255,.22);
     border-radius: 9px; transition: transform .06s, background .12s; }
@@ -64,27 +77,41 @@ const html = `<!doctype html>
   button:active:not(:disabled) { transform: scale(.94); }
   button:disabled { opacity: .38; cursor: default; }
   button.on { background: #ffca46; border-color: #fff; color: #16202e; font-weight: 700; }
-  .chip { padding: 8px 12px; font-size: 15px; min-width: 54px; }
-  .sp { padding: 6px 10px; font-size: 13px; }
+  .sp { padding: 9px 12px; font-size: 14px; text-align: center; }
   #spin { padding: 16px 34px; font-size: 24px; font-weight: 800; letter-spacing: .5px; }
   #info { position: absolute; left: 0; right: 0; bottom: 92px; text-align: center;
     font-size: 15px; opacity: .85; }
-  #panel { position: absolute; right: 24px; bottom: 108px; width: 340px;
-    background: rgba(10,22,38,.94); border: 1px solid rgba(255,255,255,.18);
-    border-radius: 14px; padding: 14px; pointer-events: auto; display: none;
-    box-shadow: 0 12px 40px rgba(0,0,0,.5); }
-  #panel h3 { font-size: 15px; margin-bottom: 10px; opacity: .8; font-weight: 600; }
-  .prow { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
-  .prow > span { font-size: 13px; opacity: .7; width: 32px; }
-  #counts { display: flex; gap: 5px; flex: 1; }
-  .cnt { flex: 1; padding: 7px 0; font-size: 14px; }
-  #conds { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
-  .cond { padding: 9px 12px; font-size: 14px; text-align: left; }
-  #autostart { width: 100%; padding: 12px; font-size: 17px; font-weight: 700; }
+  #panel { position: absolute; right: 24px; bottom: 108px; width: 360px;
+    background: rgba(10,22,38,.96); border: 1px solid rgba(255,255,255,.18);
+    border-radius: 16px; padding: 16px; pointer-events: auto; display: none;
+    box-shadow: 0 16px 48px rgba(0,0,0,.55); }
+  #panel h3 { font-size: 16px; margin-bottom: 14px; font-weight: 700; color: #eaf4ff;
+    padding-bottom: 10px; border-bottom: 1px solid rgba(255,255,255,.12); }
+  /* 小節標題：把「局數」跟「停止條件」分開，不再全部擠成一片按鈕 */
+  .sect { font-size: 12px; letter-spacing: .08em; opacity: .55; margin: 0 0 7px 2px; }
+  #counts { display: flex; gap: 5px; margin-bottom: 8px; }
+  .cnt { flex: 1; padding: 9px 0; font-size: 14px; }
+  .prow { display: flex; align-items: center; gap: 8px; margin-bottom: 14px;
+    border: 1px solid rgba(255,255,255,.14); border-radius: 10px; padding: 6px 10px; }
+  .prow.on { border-color: #ffca46; background: rgba(255,202,70,.10); }
+  .prow > span { font-size: 13px; opacity: .7; }
+  .prow .unit { opacity: .5; }
+  #cnt { flex: 1; min-width: 0; font: inherit; font-size: 17px; font-weight: 700;
+    color: #eaf4ff; background: none; border: none; outline: none; text-align: right;
+    font-variant-numeric: tabular-nums; }
+  #cnt::placeholder { font-size: 14px; font-weight: 400; opacity: .35; }
+  /* 數字框右邊的上下小箭頭會擠掉版面，拿掉 */
+  #cnt::-webkit-outer-spin-button, #cnt::-webkit-inner-spin-button {
+    -webkit-appearance: none; margin: 0; }
+  #cnt { -moz-appearance: textfield; appearance: textfield; }
+  #conds { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+  .cond { padding: 10px 12px; font-size: 14px; text-align: left; }
+  #autostart { width: 100%; padding: 13px; font-size: 17px; font-weight: 700; }
   @media (max-width: 820px) {
-    #chips { max-width: 55%; }
-    .chip { padding: 6px 9px; font-size: 13px; min-width: 44px; }
+    .step { width: 38px; height: 36px; font-size: 19px; }
+    #betval { min-width: 74px; font-size: 17px; }
     #spin { padding: 12px 22px; font-size: 19px; }
+    #panel { width: calc(100vw - 48px); right: 24px; }
   }
 </style>
 </head>

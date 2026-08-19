@@ -267,6 +267,27 @@ export class AviaView {
     }
 
     /**
+     * 純裝飾的圓角面板：下注器的凹槽、自動下注面板的底、數字鍵盤的底。
+     *
+     * ⚠ UI 層是照建立順序疊的,**面板要先建**,後面建的按鈕才會蓋在它上面。
+     */
+    createFrame(x: number, y: number, w: number, h: number,
+        fill?: Color, stroke?: Color, radius = 14): Node {
+        const n = this.mk(this.uiLayer, 'frame', w, h);
+        n.getComponent(UITransform)!.setAnchorPoint(0.5, 0.5);
+        n.setPosition(x, y);
+        const g = n.addComponent(Graphics);
+        g.fillColor = fill ?? new Color(10, 22, 38, 242);
+        g.roundRect(-w / 2, -h / 2, w, h, radius);
+        g.fill();
+        g.strokeColor = stroke ?? new Color(255, 255, 255, 46);
+        g.lineWidth = 2;
+        g.roundRect(-w / 2, -h / 2, w, h, radius);
+        g.stroke();
+        return n;
+    }
+
+    /**
      * @param sfxKey 按下去要響哪一顆音效。傳 null = 這顆按鈕自己不出聲
      *               （SPIN／自動下注是由動作本身出聲，不是由按鈕出聲 —— 餘額不足按不動時就不該響）
      */

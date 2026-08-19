@@ -35,6 +35,8 @@ const CFG = {
 const BET_OPTIONS = [0.1, 0.5, 1, 2, 5, 10, 25, 50, 100];
 /** 自動下注局數選項。最後一個是無限循環 */
 const AUTO_COUNTS = [10, 25, 50, 100, Infinity];
+/** 「自訂」局數的上限：十位數，也就是兩位數 1–99 */
+const AUTO_COUNT_MAX = 99;
 /** 停止條件金額的級距，單位是「當前下注額的倍數」。0 = 關閉 */
 const STOP_STEPS = [0, 1, 2, 5, 10, 25, 50, 100, 250, 500];
 const AUTO_INTERVAL = 0.5;
@@ -93,12 +95,24 @@ const S = {
     consumed: new Set(),      // 已被吃掉的物件 id
     big: null,                // { text, color, t }
     // 自動下注。金額門檻存的是「下注額的倍數」，改下注額會等比縮放。
+    // countIdx = CUSTOM_COUNT(-1) 代表用玩家自己填的 custom
     auto: {
-        on: false, countIdx: 0, left: 0, baseBalance: 0,
+        on: false, countIdx: 0, custom: 0, left: 0, baseBalance: 0,
         stopAnyWin: false, winIdx: 0, upIdx: 0, downIdx: 0, panel: false,
     },
     autoTimer: 0,
+    speedMenu: false,        // 速度選單展開中
 };
+
+const CUSTOM_COUNT = -1;
+
+/** 這次自動要跑幾局。-1 = 無限，0 = 還沒決定（選了自訂但沒填） */
+function autoRounds() {
+    const A = S.auto;
+    if (A.countIdx === CUSTOM_COUNT) return clamp(A.custom | 0, 0, AUTO_COUNT_MAX);
+    const v = AUTO_COUNTS[A.countIdx];
+    return v === Infinity ? -1 : Math.max(1, v | 0);
+}
 
 const bet = () => BET_OPTIONS[S.betIdx];
 
@@ -457,6 +471,7 @@ function idleFrame(clock) {
 function spin() {
     if (S.state !== 'IDLE') return;
     S.auto.panel = false;
+    S.speedMenu = false;
     let b = bet();
     if (S.balance < b) {
         const best = BET_OPTIONS.filter(v => v <= S.balance).pop();
@@ -481,9 +496,10 @@ function toggleAuto() {
     const A = S.auto;
     if (A.on) { stopAuto('手動停止'); return; }
     if (S.balance < bet()) { S.info = '餘額不足'; syncUi(); return; }
-    const n = AUTO_COUNTS[A.countIdx];
+    const rounds = autoRounds();
+    if (rounds === 0) { S.info = '請先輸入自動下注的局數'; syncUi(); return; }
     A.on = true;
-    A.left = n === Infinity ? -1 : n;
+    A.left = rounds;
     A.baseBalance = S.balance;
     A.panel = false;
     S.info = '';
@@ -634,8 +650,8 @@ function render(dt, t, fr, playing) {
 //  UI（HTML，不畫在 canvas 上）
 // ══════════════════════════════════════════════════════════
 
-let elChips, elSpin, elSpeeds, elBalance, elBet, elWin, elInfo;
-let elAuto, elPanel, elCounts, elConds, elAutoStart;
+let elBetVal, elBetDn, elBetUp, elSpin, elSpeeds, elSpeedBtn, elBalance, elBet, elWin, elInfo;
+let elAuto, elPanel, elCounts, elConds, elAutoStart, elCustom;
 
 function buildUi() {
     const ui = document.getElementById('ui');
@@ -645,9 +661,16 @@ function buildUi() {
         <div id="win"></div>
       </div>
       <div class="row bottom">
-        <div id="chips"></div>
+        <div id="stepper">
+          <button id="betdn" class="step">−</button>
+          <span id="betval"></span>
+          <button id="betup" class="step">＋</button>
+        </div>
         <div class="right">
-          <div id="speeds"></div>
+          <div id="speedwrap">
+            <div id="speeds"></div>
+            <button id="speedbtn"></button>
+          </div>
           <button id="auto">AUTO</button>
           <button id="spin">SPIN</button>
         </div>
@@ -655,31 +678,52 @@ function buildUi() {
       <div id="info"></div>
       <div id="panel">
         <h3>自動下注</h3>
-        <div class="prow"><span>局數</span><div id="counts"></div></div>
+        <div class="sect">局數</div>
+        <div id="counts"></div>
+        <div class="prow custom">
+          <span>自訂</span>
+          <input id="cnt" type="number" inputmode="numeric" min="1" max="${AUTO_COUNT_MAX}"
+                 placeholder="1–${AUTO_COUNT_MAX}">
+          <span class="unit">局</span>
+        </div>
+        <div class="sect">停止條件（可同時開）</div>
         <div id="conds"></div>
         <button id="autostart">開始自動</button>
       </div>`;
 
-    elChips = document.getElementById('chips');
+    elBetVal = document.getElementById('betval');
+    elBetDn = document.getElementById('betdn');
+    elBetUp = document.getElementById('betup');
     elSpeeds = document.getElementById('speeds');
+    elSpeedBtn = document.getElementById('speedbtn');
     elSpin = document.getElementById('spin');
     elBalance = document.getElementById('bal');
     elBet = document.getElementById('betl');
     elWin = document.getElementById('win');
     elInfo = document.getElementById('info');
 
-    BET_OPTIONS.forEach((v, i) => {
-        const b = document.createElement('button');
-        b.className = 'chip'; b.textContent = '$' + trimNum(v);
-        b.onclick = () => { if (S.state === 'IDLE') { S.betIdx = i; syncUi(); } };
-        elChips.appendChild(b);
-    });
+    // 下注 ± 一階，循環：在最小的按 − 跳到最大，在最大的按 ＋ 回到最小
+    const stepBet = d => {
+        if (S.state !== 'IDLE' || S.auto.on) return;
+        const n = BET_OPTIONS.length;
+        S.betIdx = ((S.betIdx + d) % n + n) % n;
+        syncUi();
+    };
+    elBetDn.onclick = () => stepBet(-1);
+    elBetUp.onclick = () => stepBet(+1);
+
+    // 速度選單：點主鍵往上展開，選完就收
     SPEED_LABELS.forEach((s, i) => {
         const b = document.createElement('button');
         b.className = 'sp'; b.textContent = s;
-        b.onclick = () => { S.speed = SPEED_KEYS[i]; syncUi(); };
+        b.onclick = () => { S.speed = SPEED_KEYS[i]; S.speedMenu = false; syncUi(); };
         elSpeeds.appendChild(b);
     });
+    elSpeedBtn.onclick = () => {
+        S.speedMenu = !S.speedMenu;
+        S.auto.panel = false;          // 一次只開一個浮層
+        syncUi();
+    };
     elSpin.onclick = () => { if (S.auto.on) stopAuto('手動停止'); else spin(); };
 
     // ── 自動下注面板 ──
@@ -689,7 +733,12 @@ function buildUi() {
     elConds = document.getElementById('conds');
     elAutoStart = document.getElementById('autostart');
 
-    elAuto.onclick = () => { if (!S.auto.on) { S.auto.panel = !S.auto.panel; syncUi(); } };
+    elAuto.onclick = () => {
+        if (S.auto.on) return;
+        S.auto.panel = !S.auto.panel;
+        S.speedMenu = false;
+        syncUi();
+    };
     elAutoStart.onclick = toggleAuto;
 
     AUTO_COUNTS.forEach((v, i) => {
@@ -699,6 +748,18 @@ function buildUi() {
         b.onclick = () => { if (!S.auto.on) { S.auto.countIdx = i; syncUi(); } };
         elCounts.appendChild(b);
     });
+
+    // 自訂局數：只吃數字，超過上限就夾回去（貼上、按上下鍵、直接打都擋得住）
+    elCustom = document.getElementById('cnt');
+    elCustom.oninput = () => {
+        const digits = elCustom.value.replace(/\D/g, '').slice(0, String(AUTO_COUNT_MAX).length);
+        let v = digits ? clamp(parseInt(digits, 10), 0, AUTO_COUNT_MAX) : 0;
+        elCustom.value = v > 0 ? String(v) : '';
+        S.auto.custom = v;
+        S.auto.countIdx = CUSTOM_COUNT;   // 一開始打字就等於選了「自訂」
+        syncUi();
+    };
+    elCustom.onfocus = () => { if (!S.auto.on) { S.auto.countIdx = CUSTOM_COUNT; syncUi(); } };
     // 四條停止條件：第一條是開關，其餘點一下就在金額級距上循環
     [
         () => { S.auto.stopAnyWin = !S.auto.stopAnyWin; },
@@ -713,8 +774,10 @@ function buildUi() {
     });
 
     addEventListener('keydown', e => {
+        // 游標在自訂局數的輸入框裡時，鍵盤快捷鍵全部讓路
+        if (e.target && e.target.tagName === 'INPUT') return;
         if (e.code === 'Space') { e.preventDefault(); spin(); }
-        if (e.code === 'KeyA') { S.auto.panel = !S.auto.panel; syncUi(); }
+        if (e.code === 'KeyA') { S.auto.panel = !S.auto.panel; S.speedMenu = false; syncUi(); }
     });
     syncUi();
 }
@@ -725,11 +788,17 @@ function syncUi() {
     const cash = v => "$" + money(v);
 
     // 自動下注期間下注額鎖死，只剩速度能調
-    [...elChips.children].forEach((c, i) => {
-        c.classList.toggle("on", i === S.betIdx);
-        c.disabled = !idle || A.on;
-    });
-    [...elSpeeds.children].forEach((c, i) => c.classList.toggle("on", SPEED_KEYS[i] === S.speed));
+    const canBet = idle && !A.on && BET_OPTIONS.length > 1;
+    elBetVal.textContent = "$" + trimNum(bet());
+    elBetDn.disabled = !canBet;
+    elBetUp.disabled = !canBet;
+
+    // 速度選單：收起來只看得到主鍵，展開才長出四個選項（往上長）
+    const si = SPEED_KEYS.indexOf(S.speed);
+    elSpeedBtn.textContent = "速度 " + SPEED_LABELS[si] + " " + (S.speedMenu ? "▾" : "▴");
+    elSpeedBtn.classList.toggle("on", S.speedMenu);
+    elSpeeds.style.display = S.speedMenu ? "flex" : "none";
+    [...elSpeeds.children].forEach((c, i) => c.classList.toggle("on", i === si));
 
     elSpin.disabled = !(A.on || idle);
     elSpin.textContent = A.on ? "停止" : idle ? "SPIN" : "飛行中";
@@ -742,6 +811,8 @@ function syncUi() {
             c.classList.toggle("on", i === A.countIdx);
             c.disabled = A.on;
         });
+        elCustom.disabled = A.on;
+        elCustom.parentElement.classList.toggle("on", A.countIdx === CUSTOM_COUNT);
         const amt = i => stopAmount(i) > 0 ? cash(stopAmount(i)) : "關閉";
         const mark = b => b ? "☑" : "☐";
         const rows = [
@@ -755,8 +826,12 @@ function syncUi() {
             c.classList.toggle("on", rows[i][1]);
             c.disabled = A.on;
         });
-        elAutoStart.textContent = A.on ? "停止自動" : "開始自動";
+        const r = autoRounds();
+        elAutoStart.textContent = A.on ? "停止自動"
+            : "開始自動" + (r < 0 ? "　∞" : r > 0 ? `　${r} 局` : "");
         elAutoStart.classList.toggle("on", A.on);
+        // 選了自訂卻沒填數字 → 不讓他開始，免得按下去沒反應不知道為什麼
+        elAutoStart.disabled = !A.on && (S.balance < bet() || r === 0);
     }
 
     elBalance.textContent = "餘額 " + cash(S.balance);
