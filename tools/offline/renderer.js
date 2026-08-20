@@ -37,8 +37,8 @@ const BET_OPTIONS = [0.1, 0.5, 1, 2, 5, 10, 25, 50, 100];
 const AUTO_COUNTS = [10, 25, 50, 100, Infinity];
 /** 「自訂」局數的上限：十位數，也就是兩位數 1–99 */
 const AUTO_COUNT_MAX = 99;
-/** 停止條件金額的級距，單位是「當前下注額的倍數」。0 = 關閉 */
-const STOP_STEPS = [0, 1, 2, 5, 10, 25, 50, 100, 250, 500];
+/** 停止條件金額的上限。玩家自己輸入絕對金額，0 = 那條關閉 */
+const STOP_AMOUNT_MAX = 999999;
 const AUTO_INTERVAL = 0.5;
 const SPEED_KEYS = ['slow', 'medium', 'fast', 'ultra'];
 const SPEED_LABELS = ['慢', '中', '快', '極快'];
@@ -98,7 +98,8 @@ const S = {
     // countIdx = CUSTOM_COUNT(-1) 代表用玩家自己填的 custom
     auto: {
         on: false, countIdx: 0, custom: 0, left: 0, baseBalance: 0,
-        stopAnyWin: false, winIdx: 0, upIdx: 0, downIdx: 0, panel: false,
+        // 三個金額門檻是玩家輸入的絕對金額（0 = 這條關閉）
+        stopAnyWin: false, winAmt: 0, upAmt: 0, downAmt: 0, panel: false,
     },
     autoTimer: 0,
     speedMenu: false,        // 速度選單展開中
@@ -490,7 +491,6 @@ function spin() {
 }
 
 // ── 自動下注 ──────────────────────────────────────────────
-const stopAmount = idx => (STOP_STEPS[idx] || 0) * bet();
 
 function toggleAuto() {
     const A = S.auto;
@@ -521,9 +521,9 @@ function checkAutoStop() {
     const cash = v => "$" + money(v);
 
     if (A.stopAnyWin && win > 0) { stopAuto('任何勝利'); return true; }
-    if (A.winIdx > 0 && win >= stopAmount(A.winIdx)) { stopAuto('單次獎金達 ' + cash(win)); return true; }
-    if (A.upIdx > 0 && delta >= stopAmount(A.upIdx)) { stopAuto('餘額增加 ' + cash(delta)); return true; }
-    if (A.downIdx > 0 && -delta >= stopAmount(A.downIdx)) { stopAuto('餘額減少 ' + cash(-delta)); return true; }
+    if (A.winAmt > 0 && win >= A.winAmt) { stopAuto('單次獎金達 ' + cash(win)); return true; }
+    if (A.upAmt > 0 && delta >= A.upAmt) { stopAuto('餘額增加 ' + cash(delta)); return true; }
+    if (A.downAmt > 0 && -delta >= A.downAmt) { stopAuto('餘額減少 ' + cash(-delta)); return true; }
     if (A.left > 0) A.left--;
     if (A.left === 0) { stopAuto('局數跑完'); return true; }
     if (S.balance < bet()) { stopAuto('餘額不足'); return true; }
@@ -652,6 +652,7 @@ function render(dt, t, fr, playing) {
 
 let elBetVal, elBetDn, elBetUp, elSpin, elSpeeds, elSpeedBtn, elBalance, elBet, elWin, elInfo;
 let elAuto, elPanel, elCounts, elConds, elAutoStart, elCustom;
+let elCondAnyWin, elAmounts = [];
 
 function buildUi() {
     const ui = document.getElementById('ui');
@@ -760,17 +761,41 @@ function buildUi() {
         syncUi();
     };
     elCustom.onfocus = () => { if (!S.auto.on) { S.auto.countIdx = CUSTOM_COUNT; syncUi(); } };
-    // 四條停止條件：第一條是開關，其餘點一下就在金額級距上循環
-    [
-        () => { S.auto.stopAnyWin = !S.auto.stopAnyWin; },
-        () => { S.auto.winIdx = (S.auto.winIdx + 1) % STOP_STEPS.length; },
-        () => { S.auto.upIdx = (S.auto.upIdx + 1) % STOP_STEPS.length; },
-        () => { S.auto.downIdx = (S.auto.downIdx + 1) % STOP_STEPS.length; },
-    ].forEach(fn => {
-        const b = document.createElement('button');
-        b.className = 'cond';
-        b.onclick = () => { if (!S.auto.on) { fn(); syncUi(); } };
-        elConds.appendChild(b);
+    // 第一條是純開關
+    const anyWin = document.createElement('button');
+    anyWin.className = 'cond';
+    anyWin.onclick = () => { if (!S.auto.on) { S.auto.stopAnyWin = !S.auto.stopAnyWin; syncUi(); } };
+    elConds.appendChild(anyWin);
+    elCondAnyWin = anyWin;
+
+    // 其餘三條：標題 + 玩家自己輸入金額的框（打多少就是多少，0 = 關閉）
+    elAmounts = [
+        ['winAmt', '單次獎金 ≥'],
+        ['upAmt', '餘額增加 ≥'],
+        ['downAmt', '餘額減少 ≥'],
+    ].map(([key, label]) => {
+        const row = document.createElement('div');
+        row.className = 'prow amt';
+        const t = document.createElement('span');
+        t.className = 'amtlabel';
+        t.textContent = label;
+        const cur = document.createElement('span');
+        cur.className = 'unit';
+        cur.textContent = '$';
+        const inp = document.createElement('input');
+        inp.type = 'number'; inp.inputMode = 'numeric';
+        inp.min = '0'; inp.max = String(STOP_AMOUNT_MAX);
+        inp.placeholder = '不限';
+        inp.oninput = () => {
+            const digits = inp.value.replace(/\D/g, '').slice(0, String(STOP_AMOUNT_MAX).length);
+            const v = digits ? clamp(parseInt(digits, 10), 0, STOP_AMOUNT_MAX) : 0;
+            inp.value = v > 0 ? String(v) : '';
+            S.auto[key] = v;
+            syncUi();
+        };
+        row.append(t, cur, inp);
+        elConds.appendChild(row);
+        return { row, inp, key };
     });
 
     addEventListener('keydown', e => {
@@ -813,18 +838,13 @@ function syncUi() {
         });
         elCustom.disabled = A.on;
         elCustom.parentElement.classList.toggle("on", A.countIdx === CUSTOM_COUNT);
-        const amt = i => stopAmount(i) > 0 ? cash(stopAmount(i)) : "關閉";
         const mark = b => b ? "☑" : "☐";
-        const rows = [
-            [mark(A.stopAnyWin) + "  任何勝利就停", A.stopAnyWin],
-            [mark(A.winIdx > 0) + "  單次獎金 ≥ " + amt(A.winIdx), A.winIdx > 0],
-            [mark(A.upIdx > 0) + "  餘額增加 ≥ " + amt(A.upIdx), A.upIdx > 0],
-            [mark(A.downIdx > 0) + "  餘額減少 ≥ " + amt(A.downIdx), A.downIdx > 0],
-        ];
-        [...elConds.children].forEach((c, i) => {
-            c.textContent = rows[i][0];
-            c.classList.toggle("on", rows[i][1]);
-            c.disabled = A.on;
+        elCondAnyWin.textContent = mark(A.stopAnyWin) + "  任何勝利就停";
+        elCondAnyWin.classList.toggle("on", A.stopAnyWin);
+        elCondAnyWin.disabled = A.on;
+        elAmounts.forEach(a => {
+            a.row.classList.toggle("on", A[a.key] > 0);
+            a.inp.disabled = A.on;
         });
         const r = autoRounds();
         elAutoStart.textContent = A.on ? "停止自動"

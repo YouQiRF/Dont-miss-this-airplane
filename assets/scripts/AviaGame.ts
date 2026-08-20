@@ -28,6 +28,9 @@ const SPEED_LABELS = ['慢', '中', '快', '極快'];
 /** auto.countIdx 的特殊值：用玩家自己輸入的局數,而不是 autoCountOptions 裡的預設值 */
 const CUSTOM_COUNT = -1;
 
+/** 數字鍵盤現在在填哪一格 */
+type KeypadTarget = 'count' | 'win' | 'up' | 'down';
+
 const G_BET = { name: '① 下注', id: 'bet', displayOrder: 1 };
 const G_SYM = { name: '② 符號數值', id: 'sym', displayOrder: 2 };
 const G_OFF = { name: '③ 離線結果', id: 'off', displayOrder: 3 };
@@ -73,10 +76,10 @@ export class AviaGame extends Component {
     autoCountMax = 99;
 
     @property({
-        type: [CCFloat], group: G_BET,
-        tooltip: '停止條件金額的可選級距（單位：當前下注額的倍數）。第一個 0 = 關閉',
+        type: CCInteger, group: G_BET,
+        tooltip: '停止條件金額的上限。玩家在面板上自己輸入金額,打到會超過就不再吃輸入',
     })
-    stopAmountSteps: number[] = [0, 1, 2, 5, 10, 25, 50, 100, 250, 500];
+    stopAmountMax = 999999;
 
     @property({ type: CCFloat, group: G_BET, tooltip: '自動下注每局之間的間隔（秒）' })
     autoInterval = 0.5;
@@ -341,20 +344,23 @@ export class AviaGame extends Component {
      * 相對權重,0 = 永遠不出現。演算法會為了達成抽到的結局主動安排幾何
      * （例如把下降段拉長到剛好落在某艘船的甲板上）,所以這幾個數字是真的說了算。
      *
+     * **預設只剩兩種結局**：碰到甲板 = 成功（滑行減速停在跑道上）,沒碰到 = 落海。
+     * 兩個「搖晃／差點掉出去」的結局預設是 0 —— 程式都還在,想要懸念就把權重調回非 0。
+     *
      * 唯一例外：EDGE_TIP 需要前方在 glideToDeckMax 距離內有船。
      * 若 seaCarrierSpacing 設 0 或很大,找不到船時會退回 SPLASH。
      */
     @property({ type: CCFloat, group: G_END, tooltip: '【贏】乾淨停在甲板上,不懸空不搖晃' })
     weightDeckLand = 1;
 
-    @property({ type: CCFloat, group: G_END, tooltip: '【贏】衝到邊緣半截懸空,搖晃兩下後穩住' })
-    weightEdgeHold = 1;
+    @property({ type: CCFloat, group: G_END, tooltip: '【贏】衝到邊緣半截懸空,搖晃兩下後穩住。預設 0 = 關閉' })
+    weightEdgeHold = 0;
 
     @property({ type: CCFloat, group: G_END, tooltip: '【輸】直接砸進海裡' })
-    weightSplash = 3;
+    weightSplash = 1;
 
-    @property({ type: CCFloat, group: G_END, tooltip: '【輸】觸艦、搖晃兩下,最後前傾翻落海中' })
-    weightEdgeTip = 1;
+    @property({ type: CCFloat, group: G_END, tooltip: '【輸】觸艦、搖晃兩下,最後前傾翻落海中。預設 0 = 關閉' })
+    weightEdgeTip = 0;
 
     @property({ type: CCInteger, group: G_END, tooltip: '為了湊出「觸艦翻落」,最多可以往前滑幾 tick 去找船' })
     glideToDeckMax = 70;
@@ -548,12 +554,14 @@ export class AviaGame extends Component {
         countIdx: 0,        // autoCountOptions 的索引；CUSTOM_COUNT(-1) = 用下面的 custom
         custom: 0,          // 自訂局數（數字鍵盤打進來的,0 = 還沒填）
         keypad: false,      // 數字鍵盤開著沒
+        kpTarget: 'count' as KeypadTarget,   // 鍵盤現在在填哪一格
         left: 0,            // 剩餘局數（無限時為 -1）
         baseBalance: 0,     // 開始自動時的餘額,用來算增減
         stopAnyWin: false,
-        winIdx: 0,          // 單次獎金 ≥ stopAmountSteps[winIdx] × bet
-        upIdx: 0,           // 餘額增加 ≥ ...
-        downIdx: 0,         // 餘額減少 ≥ ...
+        // 三個金額門檻,玩家自己輸入的**絕對金額**（0 = 這條關閉）
+        winAmt: 0,          // 單次獎金 ≥
+        upAmt: 0,           // 餘額增加 ≥
+        downAmt: 0,         // 餘額減少 ≥
         panel: false,       // 面板開著沒
     };
     private autoTimer = 0;
@@ -573,6 +581,8 @@ export class AviaGame extends Component {
     private speedBtns: UiButton[] = [];
     private autoCountBtns: UiButton[] = [];
     private autoCondBtns: UiButton[] = [];
+    /** 三個金額輸入框（單次獎金／餘額增加／餘額減少）。點下去開數字鍵盤 */
+    private autoAmountBtns: UiButton[] = [];
     private autoPanelNodes: UiButton[] = [];
     private autoBtn!: UiButton;
     private autoStartBtn!: UiButton;
@@ -786,18 +796,18 @@ export class AviaGame extends Component {
 
         // ── 下注器：− 金額 +（凹槽先畫,按鈕才蓋得上去）──
         const bw = 236, bh = 56, bx = 30 + bw / 2, by = 58;
-        g.createFrame(bx, by, bw, bh, new Color(255, 255, 255, 22), new Color(255, 255, 255, 56), 12);
-        this.betMinus = g.createButton(bx - bw / 2 + 30, by, 48, 44, '−', 30,
+        g.createFrame('betFrame', bx, by, bw, bh, new Color(255, 255, 255, 22), new Color(255, 255, 255, 56), 12);
+        this.betMinus = g.createButton('betMinus', bx - bw / 2 + 30, by, 48, 44, '−', 30,
             () => this.stepBet(-1), 'bet');
-        this.betPlus = g.createButton(bx + bw / 2 - 30, by, 48, 44, '＋', 26,
+        this.betPlus = g.createButton('betPlus', bx + bw / 2 - 30, by, 48, 44, '＋', 26,
             () => this.stepBet(+1), 'bet');
-        this.lblBetValue = g.createText(bx, by, 24, this.textColor, 'center', true);
+        this.lblBetValue = g.createText('betValue', bx, by, 24, this.textColor, 'center', true);
 
         // Spin / AUTO
         // SPIN 不掛按鈕音 —— 它可能是「開一局」也可能是「停止自動」,由動作自己出聲
-        this.spinBtn = g.createButton(W - 150, 74, 200, 76, 'SPIN', 34,
+        this.spinBtn = g.createButton('spin', W - 150, 74, 200, 76, 'SPIN', 34,
             () => this.onSpinPressed(), null);
-        this.autoBtn = g.createButton(W - 300, 74, 88, 76, 'AUTO', 20, () => {
+        this.autoBtn = g.createButton('auto', W - 300, 74, 88, 76, 'AUTO', 20, () => {
             this.auto.panel = !this.auto.panel;
             this.speedMenu = false;            // 一次只開一個浮層,兩個疊在一起會打架
             this.refreshUi();
@@ -810,15 +820,15 @@ export class AviaGame extends Component {
         const nSpeed = SPEED_LABELS.length;
         // 選項由下往上排：最後一個（極快）貼著主鍵,第一個（慢）在最上面
         const optY = (i: number) => sy + sh + 8 + (nSpeed - 1 - i) * (sh + sgap);
-        this.speedMenuFrame = g.createFrame(sx, (optY(0) + optY(nSpeed - 1)) / 2,
+        this.speedMenuFrame = g.createFrame('speedMenu', sx, (optY(0) + optY(nSpeed - 1)) / 2,
             sw + 8, (nSpeed - 1) * (sh + sgap) + sh + 8, undefined, undefined, 12);
         this.speedBtns = SPEED_LABELS.map((s, i) =>
-            g.createButton(sx, optY(i), sw, sh, s, 17, () => {
+            g.createButton('speedOption' + i, sx, optY(i), sw, sh, s, 17, () => {
                 this.speed = SPEED_KEYS[i];
                 this.speedMenu = false;        // 選完就關
                 this.refreshUi();
             }));
-        this.speedBtn = g.createButton(sx, sy, sw, sh, '', 17, () => {
+        this.speedBtn = g.createButton('speedBtn', sx, sy, sw, sh, '', 17, () => {
             this.speedMenu = !this.speedMenu;
             this.auto.panel = false;
             this.refreshUi();
@@ -827,11 +837,11 @@ export class AviaGame extends Component {
         this.buildAutoPanel(W, H);
 
         // 讀數
-        this.lblBalance = g.createText(30, H - 120, 24, this.hudColor, 'left', true);
-        this.lblBet = g.createText(30, H - 152, 20, this.hudColor, 'left');
-        this.lblWin = g.createText(W - 30, H - 120, 28, this.hudAccent, 'right', true);
-        this.lblInfo = g.createText(W / 2, 122, 18, this.hudColor, 'center');
-        this.lblAuto = g.createText(W - 30, H - 152, 18, this.hudAccent, 'right');
+        this.lblBalance = g.createText('balance', 30, H - 120, 24, this.hudColor, 'left', true);
+        this.lblBet = g.createText('betText', 30, H - 152, 20, this.hudColor, 'left');
+        this.lblWin = g.createText('win', W - 30, H - 120, 28, this.hudAccent, 'right', true);
+        this.lblInfo = g.createText('info', W / 2, 122, 18, this.hudColor, 'center');
+        this.lblAuto = g.createText('autoText', W - 30, H - 152, 18, this.hudAccent, 'right');
     }
 
     /**
@@ -840,11 +850,10 @@ export class AviaGame extends Component {
      * 版面：真的有一塊底板（`createFrame`),不再是一堆按鈕浮在畫面上。
      * 由上到下：標題 / 局數（預設值 + 自訂 + ∞）/ 分隔線說明 / 四條停止條件 / 開始自動。
      *
-     * **金額門檻**沒有用文字輸入框 —— 在 stopAmountSteps 級距上點擊循環,
-     * 手機上好按、也不會有輸入驗證問題。門檻是「下注額的倍數」,改下注額會等比縮放。
+     * **局數與三個金額門檻都是玩家自己輸入的**：點欄位 → 跳數字鍵盤 → 打數字。
+     * 金額是絕對值（打多少就是多少),不再是「下注額的倍數」。0 = 那條件關閉。
      *
-     * **局數**則相反,玩家要能填任意數字,所以有一個「自訂」格 ——
-     * 點下去跳出數字鍵盤（見 buildKeypad),因為 Cocos 的 EditBox 需要 Sprite 背景圖,
+     * 為什麼不用文字輸入框：Cocos 的 EditBox 需要 Sprite 背景圖,
      * 而這個專案是零素材、全向量繪製的。鍵盤用現成的按鈕就能拼,手機上也比叫出系統鍵盤好按。
      */
     private buildAutoPanel(W: number, H: number) {
@@ -854,9 +863,9 @@ export class AviaGame extends Component {
         const left = cx - pw / 2, top = cy + ph / 2;
         const row = (i: number) => top - 92 - i * 42;  // 第 0 列是局數
 
-        this.autoPanelFrame = g.createFrame(cx, cy, pw, ph);   // 底板要先建,按鈕才蓋得上去
+        this.autoPanelFrame = g.createFrame('autoPanel', cx, cy, pw, ph);   // 底板要先建,按鈕才蓋得上去
         this.autoPanelNodes.push(
-            g.createButton(cx, top - 30, pw - 24, 36, '自動下注', 19, () => { }, null));
+            g.createButton('autoTitle', cx, top - 30, pw - 24, 36, '自動下注', 19, () => { }, null));
 
         // ── 局數 ──
         // autoCountOptions 的最後一個固定是「無限」,前面的是預設局數,再多一格「自訂」
@@ -867,7 +876,7 @@ export class AviaGame extends Component {
 
         this.autoCountBtns = opts.map((v, i) => {
             const infinite = i === opts.length - 1;
-            return g.createButton(bx(i), row(0), bw, 36, infinite ? '∞' : `${v}`, 17, () => {
+            return g.createButton('autoCount' + i, bx(i), row(0), bw, 36, infinite ? '∞' : `${v}`, 17, () => {
                 if (this.auto.on) return;
                 this.auto.countIdx = i;
                 this.auto.keypad = false;
@@ -876,30 +885,40 @@ export class AviaGame extends Component {
         });
 
         // 自訂：點一下開數字鍵盤。countIdx = -1 代表「用自訂的數字」
-        this.autoCustomBtn = g.createButton(bx(opts.length), row(0), bw, 36, '自訂', 15, () => {
-            if (this.auto.on) return;
-            this.auto.countIdx = CUSTOM_COUNT;
-            this.auto.keypad = !this.auto.keypad;
-            this.refreshUi();
-        });
+        this.autoCustomBtn = g.createButton('autoCustom', bx(opts.length), row(0), bw, 36,
+            '自訂', 15, () => this.openKeypad('count'));
 
         // ── 停止條件 ──
-        const mk = (i: number, onClick: () => void) =>
-            g.createButton(cx, row(i), pw - 36, 36, '', 16, onClick);
+        // 三條金額條件右邊各有一個輸入框,點它（或點左邊那條）都會開數字鍵盤
+        const amtW = 132, condW = pw - 36 - amtW - 8;
+        const condX = left + 18 + condW / 2;
+        const amtX = left + 18 + condW + 8 + amtW / 2;
+        const mk = (i: number, w: number, x: number, onClick: () => void) =>
+            g.createButton('autoCond' + i, x, row(i), w, 36, '', 16, onClick);
 
         this.autoCondBtns = [
-            mk(1, () => { if (!this.auto.on) { this.auto.stopAnyWin = !this.auto.stopAnyWin; this.refreshUi(); } }),
-            mk(2, () => { if (!this.auto.on) { this.cycleStop('winIdx'); } }),
-            mk(3, () => { if (!this.auto.on) { this.cycleStop('upIdx'); } }),
-            mk(4, () => { if (!this.auto.on) { this.cycleStop('downIdx'); } }),
+            // 第一條沒有金額,佔滿整列
+            mk(1, pw - 36, cx, () => {
+                if (this.auto.on) return;
+                this.auto.stopAnyWin = !this.auto.stopAnyWin;
+                this.refreshUi();
+            }),
+            mk(2, condW, condX, () => this.openKeypad('win')),
+            mk(3, condW, condX, () => this.openKeypad('up')),
+            mk(4, condW, condX, () => this.openKeypad('down')),
         ];
 
+        const targets: KeypadTarget[] = ['win', 'up', 'down'];
+        this.autoAmountBtns = targets.map((t, i) =>
+            g.createButton('autoAmount' + (i + 2), amtX, row(i + 2), amtW, 36,
+                '點此輸入', 15, () => this.openKeypad(t)));
+
         // 開始／停止自動由 toggleAuto()、stopAuto() 出聲,按鈕自己不掛音
-        this.autoStartBtn = g.createButton(cx, row(5) - 6, pw - 36, 44, '開始自動', 20,
+        this.autoStartBtn = g.createButton('autoStart', cx, row(5) - 6, pw - 36, 44, '開始自動', 20,
             () => this.toggleAuto(), null);
 
         this.autoPanelNodes.push(...this.autoCountBtns, this.autoCustomBtn,
-            ...this.autoCondBtns, this.autoStartBtn);
+            ...this.autoCondBtns, ...this.autoAmountBtns, this.autoStartBtn);
 
         this.buildKeypad(cx - pw / 2 - 130, cy);
     }
@@ -911,9 +930,9 @@ export class AviaGame extends Component {
     private buildKeypad(cx: number, cy: number) {
         const g = this.gfx;
         const kw = 216, kh = 300;
-        this.keypadFrame = g.createFrame(cx, cy, kw, kh);
+        this.keypadFrame = g.createFrame('keypad', cx, cy, kw, kh);
         this.keypadNodes.push(
-            g.createButton(cx, cy + kh / 2 - 28, kw - 24, 40, '', 26, () => { }, null));
+            g.createButton('keypadValue', cx, cy + kh / 2 - 28, kw - 24, 40, '', 26, () => { }, null));
         this.lblKeypad = this.keypadNodes[0];
 
         const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '⌫', '0', '✓'];
@@ -921,34 +940,58 @@ export class AviaGame extends Component {
             const c = i % 3, r = (i / 3) | 0;
             const x = cx - 66 + c * 66;
             const y = cy + kh / 2 - 84 - r * 52;
-            this.keypadNodes.push(g.createButton(x, y, 58, 44, k, 22, () => this.keypadPress(k)));
+            this.keypadNodes.push(g.createButton('key' + i, x, y, 58, 44, k, 22, () => this.keypadPress(k)));
         });
     }
 
     /** 數字鍵盤的一次按鍵。上限用「打進去會超過就不吃」處理,不用打完再夾。 */
     private keypadPress(k: string) {
         const A = this.auto;
+        const cur = this.kpValue();
         if (k === '⌫') {
-            A.custom = (A.custom / 10) | 0;
+            this.kpSet((cur / 10) | 0);
         } else if (k === '✓') {
             A.keypad = false;
         } else {
-            const next = A.custom * 10 + Number(k);
-            if (next <= this.autoCountMax) A.custom = next;
+            const next = cur * 10 + Number(k);
+            if (next <= this.kpMax()) this.kpSet(next);   // 打進去會超過就不吃
         }
-        A.countIdx = CUSTOM_COUNT;
+        if (A.kpTarget === 'count') A.countIdx = CUSTOM_COUNT;
         this.refreshUi();
     }
 
-    private cycleStop(key: 'winIdx' | 'upIdx' | 'downIdx') {
-        const steps = this.stopAmountSteps.length || 1;
-        this.auto[key] = (this.auto[key] + 1) % steps;
+    /**
+     * 打開數字鍵盤填某一格。同一顆鍵盤三個金額欄位與局數共用,
+     * 靠 kpTarget 決定打進去的數字要寫到哪裡。再按同一格就收起來。
+     */
+    private openKeypad(target: KeypadTarget) {
+        if (this.auto.on) return;
+        const A = this.auto;
+        A.keypad = !(A.keypad && A.kpTarget === target);
+        A.kpTarget = target;
+        if (target === 'count') A.countIdx = CUSTOM_COUNT;
         this.refreshUi();
     }
 
-    /** 門檻金額 = 級距倍數 × 當前下注額。0 = 這條停止條件關閉 */
-    private stopAmount(idx: number) {
-        return (this.stopAmountSteps[idx] ?? 0) * this.bet();
+    /** 鍵盤現在正在編輯的那個數字 */
+    private kpValue(): number {
+        const A = this.auto;
+        return A.kpTarget === 'count' ? A.custom
+            : A.kpTarget === 'win' ? A.winAmt
+                : A.kpTarget === 'up' ? A.upAmt : A.downAmt;
+    }
+
+    private kpSet(v: number) {
+        const A = this.auto;
+        if (A.kpTarget === 'count') A.custom = v;
+        else if (A.kpTarget === 'win') A.winAmt = v;
+        else if (A.kpTarget === 'up') A.upAmt = v;
+        else A.downAmt = v;
+    }
+
+    /** 這一格的上限。局數是兩位數,金額另外一個上限 */
+    private kpMax() {
+        return this.auto.kpTarget === 'count' ? this.autoCountMax : this.stopAmountMax;
     }
 
     private refreshUi() {
@@ -970,7 +1013,7 @@ export class AviaGame extends Component {
         this.speedMenuFrame.active = this.speedMenu;
         this.speedBtns.forEach((b, i) => {
             b.node.active = this.speedMenu;
-            b.setActive(i === si);
+            b.setActive(i === si);      // setActive 內含重畫,展開時外框一定畫得出來
         });
 
         this.spinBtn.setEnabled(A.on || (idle && this.balance >= bet));
@@ -979,13 +1022,30 @@ export class AviaGame extends Component {
         this.autoBtn.setEnabled(!A.on);
 
         // ── 面板 ──
+        // 這些節點在場景裡預設是關著的（不然開場會閃一格）,打開時重畫一次外框
         this.autoPanelFrame.active = A.panel;
-        this.autoPanelNodes.forEach(b => { b.node.active = A.panel; });
+        this.autoPanelNodes.forEach(b => {
+            const was = b.node.active;
+            b.node.active = A.panel;
+            if (A.panel && !was) b.repaint();
+        });
         // 鍵盤只在「面板開著 + 選了自訂 + 按了自訂鍵」三個條件同時成立時出現
         const kp = A.panel && A.keypad && !A.on;
         this.keypadFrame.active = kp;
-        this.keypadNodes.forEach(b => { b.node.active = kp; });
-        if (kp) this.lblKeypad.setLabel(A.custom > 0 ? `${A.custom} 局` : '輸入局數');
+        this.keypadNodes.forEach(b => {
+            const was = b.node.active;
+            b.node.active = kp;
+            if (kp && !was) b.repaint();
+        });
+        if (kp) {
+            const v = this.kpValue();
+            const title: Record<KeypadTarget, string> = {
+                count: '局數', win: '單次獎金', up: '餘額增加', down: '餘額減少',
+            };
+            this.lblKeypad.setLabel(v > 0
+                ? (A.kpTarget === 'count' ? `${v} 局` : `${cur}${money(v)}`)
+                : `輸入${title[A.kpTarget]}`);
+        }
 
         if (A.panel) {
             this.autoCountBtns.forEach((b, i) => {
@@ -996,19 +1056,26 @@ export class AviaGame extends Component {
             this.autoCustomBtn.setLabel(A.custom > 0 ? `${A.custom}` : '自訂');
             this.autoCustomBtn.setEnabled(!A.on);
 
-            const amt = (i: number) => this.stopAmount(i) > 0
-                ? `${cur}${money(this.stopAmount(i))}` : '關閉';
             const on = (b: boolean) => b ? '☑' : '☐';
+            const amts = [A.winAmt, A.upAmt, A.downAmt];
 
             this.autoCondBtns[0].setLabel(`${on(A.stopAnyWin)}  任何勝利就停`);
-            this.autoCondBtns[1].setLabel(`${on(A.winIdx > 0)}  單次獎金 ≥ ${amt(A.winIdx)}`);
-            this.autoCondBtns[2].setLabel(`${on(A.upIdx > 0)}  餘額增加 ≥ ${amt(A.upIdx)}`);
-            this.autoCondBtns[3].setLabel(`${on(A.downIdx > 0)}  餘額減少 ≥ ${amt(A.downIdx)}`);
+            this.autoCondBtns[1].setLabel(`${on(A.winAmt > 0)}  單次獎金 ≥`);
+            this.autoCondBtns[2].setLabel(`${on(A.upAmt > 0)}  餘額增加 ≥`);
+            this.autoCondBtns[3].setLabel(`${on(A.downAmt > 0)}  餘額減少 ≥`);
             this.autoCondBtns[0].setActive(A.stopAnyWin);
-            this.autoCondBtns[1].setActive(A.winIdx > 0);
-            this.autoCondBtns[2].setActive(A.upIdx > 0);
-            this.autoCondBtns[3].setActive(A.downIdx > 0);
-            this.autoCondBtns.forEach(b => b.setEnabled(!A.on));
+            this.autoCondBtns.forEach((b, i) => {
+                if (i > 0) b.setActive(amts[i - 1] > 0);
+                b.setEnabled(!A.on);
+            });
+
+            // 三個金額輸入框：點下去開數字鍵盤,正在編輯的那格會亮起來
+            const targets: KeypadTarget[] = ['win', 'up', 'down'];
+            this.autoAmountBtns.forEach((b, i) => {
+                b.setLabel(amts[i] > 0 ? `${cur}${money(amts[i])}` : '點此輸入');
+                b.setActive(A.keypad && A.kpTarget === targets[i]);
+                b.setEnabled(!A.on);
+            });
 
             this.autoStartBtn.setLabel(A.on ? '停止自動' : `開始自動${this.autoCountLabel()}`);
             this.autoStartBtn.setActive(A.on);
@@ -1085,13 +1152,13 @@ export class AviaGame extends Component {
         const delta = this.balance - A.baseBalance;
 
         if (A.stopAnyWin && win > 0) { this.stopAuto('任何勝利'); return true; }
-        if (A.winIdx > 0 && win >= this.stopAmount(A.winIdx)) {
+        if (A.winAmt > 0 && win >= A.winAmt) {
             this.stopAuto(`單次獎金達 ${this.currencySymbol}${money(win)}`); return true;
         }
-        if (A.upIdx > 0 && delta >= this.stopAmount(A.upIdx)) {
+        if (A.upAmt > 0 && delta >= A.upAmt) {
             this.stopAuto(`餘額增加 ${this.currencySymbol}${money(delta)}`); return true;
         }
-        if (A.downIdx > 0 && -delta >= this.stopAmount(A.downIdx)) {
+        if (A.downAmt > 0 && -delta >= A.downAmt) {
             this.stopAuto(`餘額減少 ${this.currencySymbol}${money(-delta)}`); return true;
         }
         if (A.left > 0) A.left--;

@@ -256,7 +256,12 @@ export function carrierDeckAt(x: number): number | null {
 }
 
 /**
- * 結算動畫的出現權重。相對值,0 = 永遠不出現。
+ * 結算動畫的出現權重。相對值,**0 = 永遠不出現**。
+ *
+ * ⚠ 預設只剩兩種結局：**碰到甲板就是成功,沒碰到就是落海**。
+ *   兩個「搖晃」結局（EDGE_HOLD / EDGE_TIP）預設關掉 ——
+ *   「差點掉出去」那段懸念拿掉了,降落改成單純的滑行減速停在甲板上。
+ *   要把懸念加回來就把對應的權重調成非 0（Inspector ⑧ 結算動畫權重),程式都還在。
  *
  * 贏局在 DECK_LAND / EDGE_HOLD 之間抽;輸局在 SPLASH / EDGE_TIP 之間抽。
  * 演算法會為了達成抽到的結局去「安排幾何」（例如把下降段拉長到剛好落在某艘船的甲板上）,
@@ -267,9 +272,9 @@ export function carrierDeckAt(x: number): number | null {
  */
 export const ENDING_WEIGHTS = {
     winDeckLand: 1,   // 乾淨停在甲板上
-    winEdgeHold: 1,   // 衝到邊緣半截懸空,搖晃後穩住
-    loseSplash: 3,    // 直接砸進海裡
-    loseEdgeTip: 1,   // 觸艦、搖晃,最後前傾翻落
+    winEdgeHold: 0,   // 衝到邊緣半截懸空,搖晃後穩住
+    loseSplash: 1,    // 直接砸進海裡
+    loseEdgeTip: 0,   // 觸艦、搖晃,最後前傾翻落
 };
 
 export function configureEndingWeights(p: Partial<typeof ENDING_WEIGHTS>) {

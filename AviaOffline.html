@@ -23,7 +23,7 @@
   #win { font-size: 22px; font-weight: 700; color: #ffca46; }
   /* 下注器：−  金額  ＋（金額本身不可點，只有兩顆鍵） */
   #stepper { display: flex; align-items: center; gap: 4px; pointer-events: auto;
-    background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.20);
+    background: rgba(6,16,30,.55); border: 1px solid rgba(255,255,255,.26);
     border-radius: 12px; padding: 4px; }
   .step { width: 44px; height: 40px; font-size: 22px; line-height: 1; }
   #betval { min-width: 96px; text-align: center; font-size: 20px; font-weight: 700;
@@ -37,10 +37,11 @@
     position: absolute; bottom: calc(100% + 6px); left: 0; right: 0;
     background: rgba(10,22,38,.96); border: 1px solid rgba(255,255,255,.18);
     border-radius: 12px; padding: 5px; box-shadow: 0 10px 30px rgba(0,0,0,.5); }
+  /* 按鈕底色：深色半透明。白底疊在亮藍的天空上等於沒有底，字很難讀 */
   button { font: inherit; color: #dceaf8; cursor: pointer;
-    background: rgba(255,255,255,.10); border: 1px solid rgba(255,255,255,.22);
+    background: rgba(6,16,30,.65); border: 1px solid rgba(255,255,255,.32);
     border-radius: 9px; transition: transform .06s, background .12s; }
-  button:hover:not(:disabled) { background: rgba(255,255,255,.18); }
+  button:hover:not(:disabled) { background: rgba(6,16,30,.82); }
   button:active:not(:disabled) { transform: scale(.94); }
   button:disabled { opacity: .38; cursor: default; }
   button.on { background: #ffca46; border-color: #fff; color: #16202e; font-weight: 700; }
@@ -73,6 +74,16 @@
   #cnt { -moz-appearance: textfield; appearance: textfield; }
   #conds { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
   .cond { padding: 10px 12px; font-size: 14px; text-align: left; }
+  /* 金額條件：標題 + 玩家自己輸入的框 */
+  .prow.amt { margin-bottom: 0; padding: 5px 12px; }
+  .amtlabel { flex: 1; font-size: 14px; opacity: .9; }
+  .prow.amt input { flex: 0 0 96px; min-width: 0; font: inherit; font-size: 15px;
+    font-weight: 700; color: #eaf4ff; background: none; border: none; outline: none;
+    text-align: right; font-variant-numeric: tabular-nums; }
+  .prow.amt input::placeholder { font-size: 13px; font-weight: 400; opacity: .35; }
+  .prow.amt input::-webkit-outer-spin-button,
+  .prow.amt input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+  .prow.amt input { -moz-appearance: textfield; appearance: textfield; }
   #autostart { width: 100%; padding: 13px; font-size: 17px; font-weight: 700; }
   @media (max-width: 820px) {
     .step { width: 38px; height: 36px; font-size: 19px; }
@@ -89,7 +100,7 @@
  * 以下由 tools/genoffline.js 自動產生，請勿直接修改這個檔案。
  * 演算法來源：assets/scripts/AviaPath.ts
  * 渲染來源：  tools/offline/renderer.js
- * 產生時間：  2026-08-19T09:02:50.373Z
+ * 產生時間：  2026-08-19T10:22:47.023Z
  * ============================================================ */
 
 /* ───────────────── 演算法（AviaPath.ts） ───────────────── */
@@ -351,7 +362,12 @@ function carrierDeckAt(x        )                {
 }
 
 /**
- * 結算動畫的出現權重。相對值,0 = 永遠不出現。
+ * 結算動畫的出現權重。相對值,**0 = 永遠不出現**。
+ *
+ * ⚠ 預設只剩兩種結局：**碰到甲板就是成功,沒碰到就是落海**。
+ *   兩個「搖晃」結局（EDGE_HOLD / EDGE_TIP）預設關掉 ——
+ *   「差點掉出去」那段懸念拿掉了,降落改成單純的滑行減速停在甲板上。
+ *   要把懸念加回來就把對應的權重調成非 0（Inspector ⑧ 結算動畫權重),程式都還在。
  *
  * 贏局在 DECK_LAND / EDGE_HOLD 之間抽;輸局在 SPLASH / EDGE_TIP 之間抽。
  * 演算法會為了達成抽到的結局去「安排幾何」（例如把下降段拉長到剛好落在某艘船的甲板上）,
@@ -362,9 +378,9 @@ function carrierDeckAt(x        )                {
  */
 const ENDING_WEIGHTS = {
     winDeckLand: 1,   // 乾淨停在甲板上
-    winEdgeHold: 1,   // 衝到邊緣半截懸空,搖晃後穩住
-    loseSplash: 3,    // 直接砸進海裡
-    loseEdgeTip: 1,   // 觸艦、搖晃,最後前傾翻落
+    winEdgeHold: 0,   // 衝到邊緣半截懸空,搖晃後穩住
+    loseSplash: 1,    // 直接砸進海裡
+    loseEdgeTip: 0,   // 觸艦、搖晃,最後前傾翻落
 };
 
 function configureEndingWeights(p                                ) {
@@ -1165,8 +1181,8 @@ const BET_OPTIONS = [0.1, 0.5, 1, 2, 5, 10, 25, 50, 100];
 const AUTO_COUNTS = [10, 25, 50, 100, Infinity];
 /** 「自訂」局數的上限：十位數，也就是兩位數 1–99 */
 const AUTO_COUNT_MAX = 99;
-/** 停止條件金額的級距，單位是「當前下注額的倍數」。0 = 關閉 */
-const STOP_STEPS = [0, 1, 2, 5, 10, 25, 50, 100, 250, 500];
+/** 停止條件金額的上限。玩家自己輸入絕對金額，0 = 那條關閉 */
+const STOP_AMOUNT_MAX = 999999;
 const AUTO_INTERVAL = 0.5;
 const SPEED_KEYS = ['slow', 'medium', 'fast', 'ultra'];
 const SPEED_LABELS = ['慢', '中', '快', '極快'];
@@ -1226,7 +1242,8 @@ const S = {
     // countIdx = CUSTOM_COUNT(-1) 代表用玩家自己填的 custom
     auto: {
         on: false, countIdx: 0, custom: 0, left: 0, baseBalance: 0,
-        stopAnyWin: false, winIdx: 0, upIdx: 0, downIdx: 0, panel: false,
+        // 三個金額門檻是玩家輸入的絕對金額（0 = 這條關閉）
+        stopAnyWin: false, winAmt: 0, upAmt: 0, downAmt: 0, panel: false,
     },
     autoTimer: 0,
     speedMenu: false,        // 速度選單展開中
@@ -1618,7 +1635,6 @@ function spin() {
 }
 
 // ── 自動下注 ──────────────────────────────────────────────
-const stopAmount = idx => (STOP_STEPS[idx] || 0) * bet();
 
 function toggleAuto() {
     const A = S.auto;
@@ -1649,9 +1665,9 @@ function checkAutoStop() {
     const cash = v => "$" + money(v);
 
     if (A.stopAnyWin && win > 0) { stopAuto('任何勝利'); return true; }
-    if (A.winIdx > 0 && win >= stopAmount(A.winIdx)) { stopAuto('單次獎金達 ' + cash(win)); return true; }
-    if (A.upIdx > 0 && delta >= stopAmount(A.upIdx)) { stopAuto('餘額增加 ' + cash(delta)); return true; }
-    if (A.downIdx > 0 && -delta >= stopAmount(A.downIdx)) { stopAuto('餘額減少 ' + cash(-delta)); return true; }
+    if (A.winAmt > 0 && win >= A.winAmt) { stopAuto('單次獎金達 ' + cash(win)); return true; }
+    if (A.upAmt > 0 && delta >= A.upAmt) { stopAuto('餘額增加 ' + cash(delta)); return true; }
+    if (A.downAmt > 0 && -delta >= A.downAmt) { stopAuto('餘額減少 ' + cash(-delta)); return true; }
     if (A.left > 0) A.left--;
     if (A.left === 0) { stopAuto('局數跑完'); return true; }
     if (S.balance < bet()) { stopAuto('餘額不足'); return true; }
@@ -1780,6 +1796,7 @@ function render(dt, t, fr, playing) {
 
 let elBetVal, elBetDn, elBetUp, elSpin, elSpeeds, elSpeedBtn, elBalance, elBet, elWin, elInfo;
 let elAuto, elPanel, elCounts, elConds, elAutoStart, elCustom;
+let elCondAnyWin, elAmounts = [];
 
 function buildUi() {
     const ui = document.getElementById('ui');
@@ -1888,17 +1905,41 @@ function buildUi() {
         syncUi();
     };
     elCustom.onfocus = () => { if (!S.auto.on) { S.auto.countIdx = CUSTOM_COUNT; syncUi(); } };
-    // 四條停止條件：第一條是開關，其餘點一下就在金額級距上循環
-    [
-        () => { S.auto.stopAnyWin = !S.auto.stopAnyWin; },
-        () => { S.auto.winIdx = (S.auto.winIdx + 1) % STOP_STEPS.length; },
-        () => { S.auto.upIdx = (S.auto.upIdx + 1) % STOP_STEPS.length; },
-        () => { S.auto.downIdx = (S.auto.downIdx + 1) % STOP_STEPS.length; },
-    ].forEach(fn => {
-        const b = document.createElement('button');
-        b.className = 'cond';
-        b.onclick = () => { if (!S.auto.on) { fn(); syncUi(); } };
-        elConds.appendChild(b);
+    // 第一條是純開關
+    const anyWin = document.createElement('button');
+    anyWin.className = 'cond';
+    anyWin.onclick = () => { if (!S.auto.on) { S.auto.stopAnyWin = !S.auto.stopAnyWin; syncUi(); } };
+    elConds.appendChild(anyWin);
+    elCondAnyWin = anyWin;
+
+    // 其餘三條：標題 + 玩家自己輸入金額的框（打多少就是多少，0 = 關閉）
+    elAmounts = [
+        ['winAmt', '單次獎金 ≥'],
+        ['upAmt', '餘額增加 ≥'],
+        ['downAmt', '餘額減少 ≥'],
+    ].map(([key, label]) => {
+        const row = document.createElement('div');
+        row.className = 'prow amt';
+        const t = document.createElement('span');
+        t.className = 'amtlabel';
+        t.textContent = label;
+        const cur = document.createElement('span');
+        cur.className = 'unit';
+        cur.textContent = '$';
+        const inp = document.createElement('input');
+        inp.type = 'number'; inp.inputMode = 'numeric';
+        inp.min = '0'; inp.max = String(STOP_AMOUNT_MAX);
+        inp.placeholder = '不限';
+        inp.oninput = () => {
+            const digits = inp.value.replace(/\D/g, '').slice(0, String(STOP_AMOUNT_MAX).length);
+            const v = digits ? clamp(parseInt(digits, 10), 0, STOP_AMOUNT_MAX) : 0;
+            inp.value = v > 0 ? String(v) : '';
+            S.auto[key] = v;
+            syncUi();
+        };
+        row.append(t, cur, inp);
+        elConds.appendChild(row);
+        return { row, inp, key };
     });
 
     addEventListener('keydown', e => {
@@ -1941,18 +1982,13 @@ function syncUi() {
         });
         elCustom.disabled = A.on;
         elCustom.parentElement.classList.toggle("on", A.countIdx === CUSTOM_COUNT);
-        const amt = i => stopAmount(i) > 0 ? cash(stopAmount(i)) : "關閉";
         const mark = b => b ? "☑" : "☐";
-        const rows = [
-            [mark(A.stopAnyWin) + "  任何勝利就停", A.stopAnyWin],
-            [mark(A.winIdx > 0) + "  單次獎金 ≥ " + amt(A.winIdx), A.winIdx > 0],
-            [mark(A.upIdx > 0) + "  餘額增加 ≥ " + amt(A.upIdx), A.upIdx > 0],
-            [mark(A.downIdx > 0) + "  餘額減少 ≥ " + amt(A.downIdx), A.downIdx > 0],
-        ];
-        [...elConds.children].forEach((c, i) => {
-            c.textContent = rows[i][0];
-            c.classList.toggle("on", rows[i][1]);
-            c.disabled = A.on;
+        elCondAnyWin.textContent = mark(A.stopAnyWin) + "  任何勝利就停";
+        elCondAnyWin.classList.toggle("on", A.stopAnyWin);
+        elCondAnyWin.disabled = A.on;
+        elAmounts.forEach(a => {
+            a.row.classList.toggle("on", A[a.key] > 0);
+            a.inp.disabled = A.on;
         });
         const r = autoRounds();
         elAutoStart.textContent = A.on ? "停止自動"

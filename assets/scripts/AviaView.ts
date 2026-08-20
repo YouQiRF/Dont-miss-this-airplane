@@ -13,6 +13,7 @@ import { ART, ArtKind, drawCarrier as drawCarrierArt, makeArtNode, setTokenLabel
 import type { ArtPalette } from './AviaArt';
 import { SILENT_AUDIO } from './AviaAudio';
 import type { AudioHooks, SfxKey } from './AviaAudio';
+import { drawUiBox, drawSun as drawSunArt } from './AviaUiArt';
 import { PHYS, SEA, seaCarrierX } from './AviaPath';
 import type { Beat, Frame, ObjKind, PerformanceScript } from './AviaPath';
 
@@ -61,6 +62,12 @@ export interface UiButton {
     setLabel(s: string): void;
     setActive(on: boolean): void;
     setEnabled(on: boolean): void;
+    /**
+     * 重畫外框。
+     * 場景裡預設關著的節點（浮層）被打開時要叫一次 —— 保證它一定畫得出來,
+     * 不用去賭「關著的時候畫的東西，打開會不會還在」。
+     */
+    repaint(): void;
 }
 
 interface Fx {
@@ -119,6 +126,14 @@ export class AviaView {
     private palette!: ArtPalette;
     /** 沒指定音效層就是 SILENT_AUDIO，所以下面所有 this.sfx.play() 都不用判斷 null */
     private sfx: AudioHooks;
+    /** 從場景撿到的節點 uuid。這些節點的位置與大小是你在編輯器決定的，程式不動 */
+    private sceneNodes = new Set<string>();
+    /** 太陽節點（場景可調）。視差是相對「你擺的位置」做偏移，不是絕對座標 */
+    private sun!: Node;
+    private gSun!: Graphics;
+    private sunBaseY = 0;
+    /** stage 的基準位置。螢幕震動是相對它偏移，場景把 stage 搬走也不會被打回原點 */
+    private stageBase = new Vec3();
 
     constructor(root: Node, cfg: ViewConfig) {
         this.cfg = cfg;
@@ -154,7 +169,27 @@ export class AviaView {
     //  建構節點樹
     // ══════════════════════════════════════════════════════
 
+    /**
+     * 取節點：**場景裡已經有同名子節點就直接用它**,沒有才程式建一個。
+     *
+     * 這是「GameObject 擺在場景上」的核心。場景裡擺好的節點,
+     * 位置、大小、縮放全部由你在編輯器決定,**程式不會覆寫**（見 place()）。
+     * 場景沒擺的就退回程式建,行為跟以前完全一樣 —— 所以空場景也照樣跑得起來。
+     *
+     * 用 `node tools/genlayout.js` 可以把整棵預設節點樹寫進場景,
+     * 開編輯器就看得到全部節點,直接拖。
+     */
     private mk(parent: Node, name: string, w?: number, h?: number): Node {
+        const found = parent.getChildByName(name);
+        if (found) {
+            this.sceneNodes.add(found.uuid);
+            const ut = found.getComponent(UITransform) ?? found.addComponent(UITransform);
+            // 場景沒設大小（0×0）才給預設值,設過的就是你的
+            if (ut.width === 0 && ut.height === 0) {
+                ut.setContentSize(w ?? this.cfg.W, h ?? this.cfg.H);
+            }
+            return found;
+        }
         const n = new Node(name);
         n.layer = Layers.Enum.UI_2D;
         const ut = n.addComponent(UITransform);
@@ -164,13 +199,56 @@ export class AviaView {
         return n;
     }
 
+    /** 這個節點是從場景撿來的嗎（撿來的就不准程式動它的位置） */
+    private isFromScene(n: Node) { return this.sceneNodes.has(n.uuid); }
+
+    /**
+     * 擺位置 —— **只對程式自己建的節點生效**。
+     * 場景擺好的節點位置由你決定,程式擺過去等於把你的調整蓋掉。
+     *
+     * 注意：飛機、物件、目的艦這些「位置由航線演算法決定」的東西不走這裡,
+     * 它們每一 frame 都要被程式移動,擺在場景上的只是外觀與起點。
+     */
+    private place(n: Node, x: number, y: number) {
+        if (!this.isFromScene(n)) n.setPosition(x, y);
+    }
+
     private mkGraphics(parent: Node, name: string): Graphics {
-        return this.mk(parent, name).addComponent(Graphics);
+        // 場景節點上可能已經掛好元件了 —— 有就用，沒有才加，重跑不會長出兩個
+        const n = this.mk(parent, name);
+        return n.getComponent(Graphics) ?? n.addComponent(Graphics);
+    }
+
+    /**
+     * 取這個節點的文字元件。
+     *
+     * **場景擺好的節點,Label 是掛在自己身上的**（genlayout 就是這樣寫的,
+     * 這樣編輯器裡直接看得到字）。這時候就沿用它,只換樣式與內容。
+     * 沒有的話才生一個置中的 `label` 子節點 —— 也就是以前的作法。
+     *
+     * 少了這一步會變成「場景的字」跟「程式生的字」兩份疊在一起。
+     */
+    private mkLabelOn(n: Node, size: number, color: Color, bold = false): Label {
+        const own = n.getComponent(Label);
+        if (own) {
+            own.fontSize = size;
+            own.lineHeight = size * 1.15;
+            own.color = color;
+            own.isBold = bold;
+            own.horizontalAlign = Label.HorizontalAlign.CENTER;
+            own.verticalAlign = Label.VerticalAlign.CENTER;
+            own.overflow = Label.Overflow.NONE;
+            return own;
+        }
+        const l = this.mkLabel(n, 'label', size, color, bold);
+        l.node.getComponent(UITransform)!.setAnchorPoint(0.5, 0.5);
+        this.place(l.node, 0, 0);
+        return l;
     }
 
     private mkLabel(parent: Node, name: string, size: number, color: Color, bold = false): Label {
         const n = this.mk(parent, name, 400, size * 1.6);
-        const l = n.addComponent(Label);
+        const l = n.getComponent(Label) ?? n.addComponent(Label);
         l.string = '';
         l.fontSize = size;
         l.lineHeight = size * 1.15;
@@ -189,14 +267,20 @@ export class AviaView {
         ART.CARRIER_HALF_W = SEA.HALF_W;
 
         // stage：把原點搬到左下角,並且是螢幕震動的施力點
-        this.stage = new Node('stage');
-        this.stage.layer = Layers.Enum.UI_2D;
-        this.stage.addComponent(UITransform).setContentSize(W, H);
-        this.stage.setPosition(-W / 2, -H / 2);
-        root.addChild(this.stage);
+        this.stage = this.mk(root, 'stage', W, H);
+        this.place(this.stage, -W / 2, -H / 2);
+        this.stageBase = this.stage.position.clone();
 
         // 天空固定在螢幕上,其餘全部掛在 camRoot 底下由鏡頭帶動（背景不放雲）
         this.gSky = this.mkGraphics(this.stage, 'sky');
+
+        // 太陽是獨立的 GameObject —— 場景裡可以直接拖位置、縮放,
+        // 視差是相對「你擺的位置」往下偏移,不是絕對座標
+        this.sun = this.mk(this.stage, 'sun', 220, 220);
+        this.place(this.sun, W * 0.78, H * 0.80);
+        this.gSun = this.sun.getComponent(Graphics) ?? this.sun.addComponent(Graphics);
+        this.sunBaseY = this.sun.position.y;
+        this.drawSun();
 
         this.camRoot = this.mk(this.stage, 'camRoot');
         this.gSeaBack = this.mkGraphics(this.camRoot, 'seaBack');
@@ -211,39 +295,37 @@ export class AviaView {
 
         this.plane = this.spawn(this.world, 'plane', ArtKind.Plane);
 
+        // 倍數標籤跟著飛機跑,位置每 frame 由程式算 —— 場景擺的只有外觀
         this.balanceNode = this.mk(this.world, 'balance', 220, 46);
         this.balanceNode.getComponent(UITransform)!.setAnchorPoint(0.5, 0.5);
-        this.balanceLabel = this.mkLabel(this.balanceNode, 'txt', 30, this.cfg.textColor, true);
-        this.balanceLabel.node.getComponent(UITransform)!.setAnchorPoint(0.5, 0.5);
-        this.balanceLabel.node.setPosition(0, 0);
+        this.balanceLabel = this.mkLabelOn(this.balanceNode, 30, this.cfg.textColor, true);
 
         this.gSeaFront = this.mkGraphics(this.camRoot, 'seaFront');
         this.fxLayer = this.mk(this.camRoot, 'fxLayer');
         this.gFx = this.mkGraphics(this.camRoot, 'fx');
 
-        // HUD
+        // HUD —— 三個讀數都是獨立節點,位置在場景裡拖
         const hud = this.mk(this.stage, 'hud');
-        this.gHud = hud.addComponent(Graphics);
+        this.gHud = hud.getComponent(Graphics) ?? hud.addComponent(Graphics);
         this.hudDist = this.mkLabel(hud, 'dist', 20, this.cfg.hudColor);
         this.hudDist.node.getComponent(UITransform)!.setAnchorPoint(0, 0.5);
         this.hudDist.horizontalAlign = Label.HorizontalAlign.LEFT;
-        this.hudDist.node.setPosition(36, H - 42);
+        this.place(this.hudDist.node, 36, H - 42);
 
         this.hudAlt = this.mkLabel(hud, 'alt', 20, this.cfg.hudColor);
         this.hudAlt.node.getComponent(UITransform)!.setAnchorPoint(0, 0.5);
         this.hudAlt.horizontalAlign = Label.HorizontalAlign.LEFT;
-        this.hudAlt.node.setPosition(36, H - 76);
+        this.place(this.hudAlt.node, 36, H - 76);
 
         this.hudMult = this.mkLabel(hud, 'mult', 40, this.cfg.hudAccent, true);
         this.hudMult.node.getComponent(UITransform)!.setAnchorPoint(0.5, 0.5);
-        this.hudMult.node.setPosition(W / 2, H - 56);
+        this.place(this.hudMult.node, W / 2, H - 56);
 
         this.bigTextNode = this.mk(this.stage, 'bigText', 900, 140);
         this.bigTextNode.getComponent(UITransform)!.setAnchorPoint(0.5, 0.5);
-        this.bigTextNode.setPosition(W / 2, H * 0.62);
-        this.bigText = this.mkLabel(this.bigTextNode, 'txt', 96, this.cfg.textColor, true);
-        this.bigText.node.getComponent(UITransform)!.setAnchorPoint(0.5, 0.5);
-        this.bigText.node.setPosition(0, 0);
+        this.place(this.bigTextNode, W / 2, H * 0.62);
+        this.bigText = this.mkLabelOn(this.bigTextNode, 96, this.cfg.textColor, true);
+        this.bigText.string = '';
         this.bigTextNode.active = false;
 
         this.uiLayer = this.mk(this.stage, 'ui');
@@ -255,14 +337,18 @@ export class AviaView {
     //  UI 元件工廠（AviaGame 拿去組下注面板 / 速度鈕 / Spin）
     // ══════════════════════════════════════════════════════
 
-    createText(x: number, y: number, size: number, color: Color,
+    /**
+     * @param name 節點名字。**場景的 `ui` 底下有同名節點就用那一個**（位置你決定）,
+     *             沒有才用 x / y 建一個。所有 UI 都吃這條規則。
+     */
+    createText(name: string, x: number, y: number, size: number, color: Color,
         align: 'left' | 'center' | 'right' = 'left', bold = false): Label {
-        const l = this.mkLabel(this.uiLayer, 'txt', size, color, bold);
+        const l = this.mkLabel(this.uiLayer, name, size, color, bold);
         const ut = l.node.getComponent(UITransform)!;
         ut.setAnchorPoint(align === 'left' ? 0 : align === 'right' ? 1 : 0.5, 0.5);
         l.horizontalAlign = align === 'left' ? Label.HorizontalAlign.LEFT
             : align === 'right' ? Label.HorizontalAlign.RIGHT : Label.HorizontalAlign.CENTER;
-        l.node.setPosition(x, y);
+        this.place(l.node, x, y);
         return l;
     }
 
@@ -271,19 +357,21 @@ export class AviaView {
      *
      * ⚠ UI 層是照建立順序疊的,**面板要先建**,後面建的按鈕才會蓋在它上面。
      */
-    createFrame(x: number, y: number, w: number, h: number,
+    createFrame(name: string, x: number, y: number, w: number, h: number,
         fill?: Color, stroke?: Color, radius = 14): Node {
-        const n = this.mk(this.uiLayer, 'frame', w, h);
-        n.getComponent(UITransform)!.setAnchorPoint(0.5, 0.5);
-        n.setPosition(x, y);
-        const g = n.addComponent(Graphics);
-        g.fillColor = fill ?? new Color(10, 22, 38, 242);
-        g.roundRect(-w / 2, -h / 2, w, h, radius);
-        g.fill();
-        g.strokeColor = stroke ?? new Color(255, 255, 255, 46);
-        g.lineWidth = 2;
-        g.roundRect(-w / 2, -h / 2, w, h, radius);
-        g.stroke();
+        const n = this.mk(this.uiLayer, name, w, h);
+        const ut = n.getComponent(UITransform)!;
+        ut.setAnchorPoint(0.5, 0.5);
+        this.place(n, x, y);
+        // 場景裡改過大小就照場景的畫
+        const fw = ut.width, fh = ut.height;
+        const g = n.getComponent(Graphics) ?? n.addComponent(Graphics);
+        // 跟編輯器預覽共用同一支畫法 —— 看到的跟跑起來的一定一樣
+        drawUiBox(g, fw, fh, {
+            fill: fill ?? new Color(10, 22, 38, 242),
+            stroke: stroke ?? new Color(255, 255, 255, 46),
+            radius,
+        });
         return n;
     }
 
@@ -291,26 +379,22 @@ export class AviaView {
      * @param sfxKey 按下去要響哪一顆音效。傳 null = 這顆按鈕自己不出聲
      *               （SPIN／自動下注是由動作本身出聲，不是由按鈕出聲 —— 餘額不足按不動時就不該響）
      */
-    createButton(x: number, y: number, w: number, h: number, text: string,
+    createButton(name: string, x: number, y: number, w: number, h: number, text: string,
         fontSize: number, onClick: () => void, sfxKey: SfxKey | null = 'click'): UiButton {
-        const n = this.mk(this.uiLayer, 'btn', w, h);
-        n.getComponent(UITransform)!.setAnchorPoint(0.5, 0.5);
-        n.setPosition(x, y);
-        const g = n.addComponent(Graphics);
-        const l = this.mkLabel(n, 'label', fontSize, this.cfg.textColor, true);
-        l.node.getComponent(UITransform)!.setAnchorPoint(0.5, 0.5);
-        l.node.setPosition(0, 0);
+        const n = this.mk(this.uiLayer, name, w, h);
+        const ut = n.getComponent(UITransform)!;
+        ut.setAnchorPoint(0.5, 0.5);
+        this.place(n, x, y);
+        // 位置與大小都以場景為準 —— 在編輯器把按鈕拉大,畫出來就是大的
+        const bw = ut.width, bh = ut.height;
+        const g = n.getComponent(Graphics) ?? n.addComponent(Graphics);
+        const l = this.mkLabelOn(n, fontSize, this.cfg.textColor, true);
         l.string = text;
 
         const st = { on: false, enabled: true };
         const paint = () => {
-            g.clear();
-            const base = st.on ? this.cfg.hudAccent : new Color(255, 255, 255, 32);
-            g.fillColor = st.enabled ? base : new Color(base.r, base.g, base.b, 26);
-            g.roundRect(-w / 2, -h / 2, w, h, Math.min(12, h / 2)); g.fill();
-            g.strokeColor = st.on ? new Color(255, 255, 255, 220) : new Color(255, 255, 255, 70);
-            g.lineWidth = 2;
-            g.roundRect(-w / 2, -h / 2, w, h, Math.min(12, h / 2)); g.stroke();
+            // 跟編輯器預覽共用同一支畫法（AviaUiArt.drawUiBox）
+            drawUiBox(g, bw, bh, { on: st.on, enabled: st.enabled, accent: this.cfg.hudAccent });
             l.color = st.enabled
                 ? (st.on ? new Color(20, 28, 40, 255) : this.cfg.textColor)
                 : new Color(this.cfg.textColor.r, this.cfg.textColor.g, this.cfg.textColor.b, 90);
@@ -332,6 +416,7 @@ export class AviaView {
             setLabel: (s: string) => { l.string = s; },
             setActive: (on: boolean) => { st.on = on; paint(); },
             setEnabled: (on: boolean) => { st.enabled = on; paint(); },
+            repaint: paint,
         };
     }
 
@@ -346,6 +431,19 @@ export class AviaView {
      * 天空。飛得越高整片漸層越往 skyHigh 染 → 高空有實際的視覺回饋。
      * 上方沒有任何邊界,鏡頭可以無限往上跑。
      */
+    /**
+     * 太陽：畫在自己節點的原點上,所以在場景裡拖節點就是搬太陽,縮放節點就是改大小。
+     * 節點上已經有 Sprite（你自己放的圖）時就不畫,直接用你的圖。
+     */
+    private drawSun() {
+        drawSunArt(this.gSun);   // 跟編輯器預覽共用（AviaUiArt.drawSun）
+    }
+
+    /** 隨鏡頭緩慢下沉。偏移是相對「場景裡擺的位置」,不是絕對座標 */
+    private updateSun(camY: number) {
+        this.sun.setPosition(this.sun.position.x, this.sunBaseY - camY * 0.12);
+    }
+
     private drawSky(camY: number) {
         const { W, H, skyTop, skyBottom, skyHigh } = this.cfg;
         const g = this.gSky;
@@ -369,12 +467,7 @@ export class AviaView {
             g.rect(0, (H / bands) * i, W, H / bands + 1);
             g.fill();
         }
-        // 太陽（隨鏡頭緩慢下沉）
-        const sunY = H * 0.80 - camY * 0.12;
-        g.fillColor = new Color(255, 236, 190, 40);
-        g.circle(W * 0.78, sunY, 110); g.fill();
-        g.fillColor = new Color(255, 246, 214, 120);
-        g.circle(W * 0.78, sunY, 58); g.fill();
+        // 太陽已經是獨立節點（見 drawSun / updateSun）,不在這裡畫
         // 高空星點
         if (alt > 0.35) {
             const a = Math.round((alt - 0.35) / 0.65 * 170);
@@ -584,6 +677,7 @@ export class AviaView {
             this.skyDrawnAt = this.camY;
             this.drawSky(this.camY);
         }
+        this.updateSun(this.camY);   // 太陽是節點,每 frame 只是搬位置,不重畫
         this.drawSeaCarriers(scroll);
         this.drawSea(scroll);
         this.updateFx(dt);
@@ -596,15 +690,16 @@ export class AviaView {
             this.hudAlt.string = '高度  --';
         }
 
-        // 螢幕震動
+        // 螢幕震動。晃動是相對 stage 的**基準位置**做偏移 ——
+        // 場景裡把 stage 搬過位置也不會被這裡打回原點
         if (this.shake > 0) {
             this.shake = Math.max(0, this.shake - dt * 3.2);
             const k = this.shake * this.cfg.shakeIntensity;
             this.stage.setPosition(
-                -W / 2 + (Math.random() - 0.5) * k,
-                -H / 2 + (Math.random() - 0.5) * k);
+                this.stageBase.x + (Math.random() - 0.5) * k,
+                this.stageBase.y + (Math.random() - 0.5) * k);
         } else {
-            this.stage.setPosition(-W / 2, -H / 2);
+            this.stage.setPosition(this.stageBase.x, this.stageBase.y);
         }
 
         // 墜海後持續下沉
@@ -751,7 +846,14 @@ export class AviaView {
             case 'LAND': {
                 // 不放煙 —— 觸艦（DECK_TOUCH）那一下已經冒過了,
                 // 這裡飛機早就停穩,再噴一次煙會像憑空冒出來
+                //
+                // 成功的收尾：一圈往外擴的光暈 + 目的艦被「壓」一下 + 倍數彈一下。
+                // 全部是既有的 FX 語彙,沒有新的粒子,所以不會跟觸艦那一下打架
                 this.shake = 0.8;
+                this.pushFx('RING', screenX, waterScreenY + PHYS.DECK_Y + 20, 0.7, 26, 210,
+                    this.cfg.hudAccent);
+                this.punch(this.carrierB, 1.06);
+                this.punch(this.balanceNode, 1.35);
                 const m = s.finalBalance;
                 const big = m >= 20;                 // 大獎門檻：字樣與 bigWin 音效共用同一條線
                 const tag = m >= 80 ? 'SUPER MEGA WIN' : m >= 40 ? 'MEGA WIN' : big ? 'BIG WIN' : 'LAND!';

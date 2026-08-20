@@ -56,7 +56,7 @@ const html = `<!doctype html>
   #win { font-size: 22px; font-weight: 700; color: #ffca46; }
   /* 下注器：−  金額  ＋（金額本身不可點，只有兩顆鍵） */
   #stepper { display: flex; align-items: center; gap: 4px; pointer-events: auto;
-    background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.20);
+    background: rgba(6,16,30,.55); border: 1px solid rgba(255,255,255,.26);
     border-radius: 12px; padding: 4px; }
   .step { width: 44px; height: 40px; font-size: 22px; line-height: 1; }
   #betval { min-width: 96px; text-align: center; font-size: 20px; font-weight: 700;
@@ -70,10 +70,11 @@ const html = `<!doctype html>
     position: absolute; bottom: calc(100% + 6px); left: 0; right: 0;
     background: rgba(10,22,38,.96); border: 1px solid rgba(255,255,255,.18);
     border-radius: 12px; padding: 5px; box-shadow: 0 10px 30px rgba(0,0,0,.5); }
+  /* 按鈕底色：深色半透明。白底疊在亮藍的天空上等於沒有底，字很難讀 */
   button { font: inherit; color: #dceaf8; cursor: pointer;
-    background: rgba(255,255,255,.10); border: 1px solid rgba(255,255,255,.22);
+    background: rgba(6,16,30,.65); border: 1px solid rgba(255,255,255,.32);
     border-radius: 9px; transition: transform .06s, background .12s; }
-  button:hover:not(:disabled) { background: rgba(255,255,255,.18); }
+  button:hover:not(:disabled) { background: rgba(6,16,30,.82); }
   button:active:not(:disabled) { transform: scale(.94); }
   button:disabled { opacity: .38; cursor: default; }
   button.on { background: #ffca46; border-color: #fff; color: #16202e; font-weight: 700; }
@@ -106,6 +107,16 @@ const html = `<!doctype html>
   #cnt { -moz-appearance: textfield; appearance: textfield; }
   #conds { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
   .cond { padding: 10px 12px; font-size: 14px; text-align: left; }
+  /* 金額條件：標題 + 玩家自己輸入的框 */
+  .prow.amt { margin-bottom: 0; padding: 5px 12px; }
+  .amtlabel { flex: 1; font-size: 14px; opacity: .9; }
+  .prow.amt input { flex: 0 0 96px; min-width: 0; font: inherit; font-size: 15px;
+    font-weight: 700; color: #eaf4ff; background: none; border: none; outline: none;
+    text-align: right; font-variant-numeric: tabular-nums; }
+  .prow.amt input::placeholder { font-size: 13px; font-weight: 400; opacity: .35; }
+  .prow.amt input::-webkit-outer-spin-button,
+  .prow.amt input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+  .prow.amt input { -moz-appearance: textfield; appearance: textfield; }
   #autostart { width: 100%; padding: 13px; font-size: 17px; font-weight: 700; }
   @media (max-width: 820px) {
     .step { width: 38px; height: 36px; font-size: 19px; }

@@ -12,7 +12,7 @@
 場景已經建好：`Canvas → GameRoot`,`AviaGame` 組件已掛上,所有參數都在 Inspector。
 設計解析度 1280×720（Project Settings 可改,程式會讀實際 Canvas 尺寸自適應）。
 
-## 五個檔案
+## 六個檔案
 
 | 檔案 | 職責 | 依賴 |
 |---|---|---|
@@ -20,7 +20,8 @@
 | `AviaView.ts` | **畫面表演**。海浪、雲、天空、鏡頭、航母、飛機、尾煙、物件、特效、HUD、按鈕 | `cc` + 下面兩支 |
 | `AviaArt.ts` | **預設美術**。所有物件的向量畫法,也是 `assets/prefabs/` 那六個 Prefab 的內容 | `cc` |
 | `AviaAudio.ts` | **音效層**。事件 → 聲音。全部留空也能跑,留空 = 那個事件靜音 | `cc` |
-| `AviaGame.ts` | 組件本體。Inspector 參數、下注、局流程、輸入 | `cc` + 上面四支 |
+| `AviaUiArt.ts` | **UI 外觀 + 編輯器預覽**。`@executeInEditMode`,讓版面在 Scene 視窗裡就看得到 | `cc` |
+| `AviaGame.ts` | 組件本體。Inspector 參數、下注、局流程、輸入 | `cc` + 上面五支 |
 
 `AviaView` 完全不認識「倍數」「結果」,它只消費 `PerformanceScript`。
 想換成 3D、換成 Spine 骨架、換成別的美術風格,只要重寫 `AviaView`,演算法一行都不用動。
@@ -84,7 +85,7 @@ const sag  = Math.min(SAG * style.sag, room * 0.55);
 
 | 組 | 重點欄位 |
 |---|---|
-| ① 下注 | `betOptions` 下注額清單（`−` / `＋` 步進器循環走這個清單）、`autoCountMax`（自訂局數上限）、`startingBalance`、`currencySymbol` |
+| ① 下注 | `betOptions` 下注額清單（`−` / `＋` 步進器循環走這個清單）、`autoCountMax`（自訂局數上限）、`stopAmountMax`（停止條件金額上限）、`startingBalance`、`currencySymbol` |
 | ② 符號數值 | `pickupValues` `+N` 清單、`boostValues` `×N` 清單、`rocketDivisor`、`pickupStepTarget`（調高 → 物件更多） |
 | ③ 離線結果 | `winChance`、`multiplierPool`、`biasPower` |
 | ④ 航線編排 | `stepUp` / `stepDown`（**等高階梯的階距**）、`baseGap`（**物件密度**）、`maxAlt`（0 = 不封頂）、`maxRoundTicks`（**終點上限**）、`decoyDensity` / `decoyClearance` |
@@ -127,6 +128,45 @@ BIG / MEGA / SUPER MEGA 分層大字、高度/距離/倍數 HUD。
 **垂直鏡頭**：飛機超過畫面高度的 `camFollowStart` 之後,鏡頭開始往上跟,沒有上限。
 海面、物件、特效都掛在 `camRoot` 底下一起移動;天空與雲自己做視差;HUD 與 UI 固定不動。
 
+### 版面在場景上（不是寫死在程式裡）
+
+`GameRoot` 底下有一整棵版面節點樹,**要調位置就在編輯器裡拖**：
+
+```
+GameRoot
+└ stage                天空以外全部掛在這；螢幕震動的施力點
+  ├ sky                天空漸層（隨高度染色 + 高空星點）
+  ├ sun                ← 獨立 GameObject，可拖、可縮放、可換成自己的圖
+  ├ camRoot            鏡頭帶動的整層
+  │  ├ seaBack / seaCarriers / world / seaFront / fxLayer / fx
+  ├ hud                dist / alt / mult 三個讀數
+  ├ bigText            BIG WIN 之類的大字
+  └ ui                 下方 bar 的每一顆控制項（betMinus / spin / speedBtn / …）
+```
+
+**開編輯器就看得到**：每個 UI 節點上都掛了一顆 `AviaUiArt`（`@executeInEditMode`）
+把外框畫出來,文字則是節點自己的 `cc.Label` —— 所以 Scene 視窗裡直接看到整條 bar,
+不用先按預覽。執行期與編輯器**共用同一支 `drawUiBox()`**,看到的就是跑起來的樣子。
+
+規則只有一條：**場景裡有同名節點就用它,沒有才由程式建**。
+
+| 你做的事 | 結果 |
+|---|---|
+| 拖節點 | 改位置,程式不會蓋掉 |
+| 改 UITransform 寬高 | 改按鈕大小,外框與圓角跟著畫 |
+| 刪掉節點 | 退回程式建,照常跑（場景整個空的也能跑） |
+| 掛自己的 Sprite | 用你的圖 |
+
+```bash
+node tools/genlayout.js            # 預演，不寫檔
+node tools/genlayout.js --write    # 寫進 game.scene（先備份到 local/）
+node tools/genlayout.js --check    # 對帳：程式要找的節點名 vs 場景實際有的
+```
+
+> **不在場景上的東西**：飛機、起飛航母、目的艦、`+N`／`×N`／飛彈、尾煙、特效。
+> 它們的位置是航線演算法算出來的,每 frame 由程式移動,擺在場景上也會被蓋掉。
+> 要換外觀請走 Inspector ⑨ 的 Prefab。
+
 ### 下方 bar
 
 ```
@@ -139,9 +179,14 @@ BIG / MEGA / SUPER MEGA 分層大字、高度/距離/倍數 HUD。
 - **速度**：點一下往上展開四個選項,**選完自動收起來**
 - **AUTO**：開自動下注面板。速度選單與自動面板互斥,開一個會關掉另一個
 
-自動下注面板分「局數」與「停止條件」兩節。局數除了預設值與 ∞,還有一格
-**自訂** —— 玩家自己填,上限 `autoCountMax`（預設 99）。
-沒填數字就不讓按「開始自動」,按鈕會直接變灰。
+自動下注面板分「局數」與「停止條件」兩節,**兩邊的數字都是玩家自己填的**：
+
+- **局數**：預設值 / ∞ / 自訂,自訂上限 `autoCountMax`（預設 99）。
+  沒填就不讓按「開始自動」,按鈕直接變灰
+- **停止條件**：三條金額條件右邊各一個輸入框,**打多少就是多少**（絕對金額,
+  不隨下注額縮放),0 或空白 = 這條關閉,上限 `stopAmountMax`（預設 999999）
+
+兩邊都是「打進去會超過就不吃」,不是打完再夾 —— 玩家不會看到數字先跳出來又被改掉。
 
 > 自訂輸入的做法兩版不同：離線版用瀏覽器原生的 `<input type=number>`;
 > Cocos 版用自己拼的數字鍵盤,因為 `EditBox` 需要 Sprite 背景圖,而這專案是零素材全向量繪製。
