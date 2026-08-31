@@ -1,5 +1,8 @@
 # Aviamasters 型玩法 — Cocos 離線版
 
+> **線上試玩** <https://youqirf.github.io/Dont-miss-this-airplane/>（點開直接玩，不用安裝）
+> **專案說明** [PROJECT.md](PROJECT.md) —— 架構、演算法、驗證數據的完整說明
+
 **Cocos Creator 3.8.6**（3.7.x / 3.8.x 皆可,改 `package.json` 的 `creator.version` 即可）
 純程式繪製,**不需要任何美術素材**,匯入就能跑。
 
