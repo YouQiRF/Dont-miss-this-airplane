@@ -12,34 +12,89 @@
   #stage { position: relative; width: 100vw; height: 100vh;
     display: flex; align-items: center; justify-content: center; }
   canvas { display: block; border-radius: 6px; box-shadow: 0 8px 40px rgba(0,0,0,.55); }
-  #ui { position: absolute; inset: 0; pointer-events: none;
+  /* UI 一律用 1280x720 設計座標排版，再由 resize() 用同一個 scale 疊回畫布上。
+     不這樣做的話，畫布會縮、DOM 不會縮，兩層在小視窗下就對不齊。 */
+  #ui { position: absolute; left: 0; top: 0; pointer-events: none;
+    width: 1280px; height: 720px; transform-origin: 0 0;
     display: flex; flex-direction: column; justify-content: space-between;
-    padding: 18px 24px; max-width: 1280px; max-height: 720px;
-    margin: auto; color: #c4def4; }
+    padding: 18px 24px; color: #c4def4; }
   .row { display: flex; justify-content: space-between; align-items: flex-end; }
+  /* 上排只放右邊的「贏 $x」。左上角 32–90px 是畫布的距離／高度 HUD，不能佔。 */
   .row.top { align-items: flex-start; font-size: 15px; }
-  #bal { font-size: 20px; color: #eaf4ff; }
-  #betl { opacity: .75; }
+  /* 餘額／下注排在 HUD 底下，位置與 Cocos 版的 balance / betText 節點一致 */
+  #readout { position: absolute; left: 30px; top: 101px; line-height: 1; }
+  #bal { display: block; font-size: 24px; color: #eaf4ff; }
+  #betl { display: block; margin-top: 14px; font-size: 20px; opacity: .75; }
   #win { font-size: 22px; font-weight: 700; color: #ffca46; }
-  #chips { display: flex; gap: 6px; flex-wrap: wrap; max-width: 62%; pointer-events: auto; }
+  /* 下注器：−  金額  ＋（金額本身不可點，只有兩顆鍵） */
+  #stepper { display: flex; align-items: center; gap: 4px; pointer-events: auto;
+    background: rgba(6,16,30,.55); border: 1px solid rgba(255,255,255,.26);
+    border-radius: 12px; padding: 4px; }
+  .step { width: 44px; height: 40px; font-size: 22px; line-height: 1; }
+  #betval { min-width: 96px; text-align: center; font-size: 20px; font-weight: 700;
+    color: #eaf4ff; font-variant-numeric: tabular-nums; }
   .right { display: flex; align-items: center; gap: 10px; pointer-events: auto; }
-  #speeds { display: flex; gap: 5px; }
+  /* 速度選單：往上展開，選完就收 */
+  #speedwrap { position: relative; }
+  #speedbtn { padding: 9px 14px; font-size: 14px; white-space: nowrap; }
+  #auto { padding: 11px 16px; font-size: 15px; letter-spacing: .04em; }
+  #speeds { display: none; flex-direction: column; gap: 4px;
+    position: absolute; bottom: calc(100% + 6px); left: 0; right: 0;
+    background: rgba(10,22,38,.96); border: 1px solid rgba(255,255,255,.18);
+    border-radius: 12px; padding: 5px; box-shadow: 0 10px 30px rgba(0,0,0,.5); }
+  /* 按鈕底色：深色半透明。白底疊在亮藍的天空上等於沒有底，字很難讀 */
   button { font: inherit; color: #dceaf8; cursor: pointer;
-    background: rgba(255,255,255,.10); border: 1px solid rgba(255,255,255,.22);
+    background: rgba(6,16,30,.65); border: 1px solid rgba(255,255,255,.32);
     border-radius: 9px; transition: transform .06s, background .12s; }
-  button:hover:not(:disabled) { background: rgba(255,255,255,.18); }
+  button:hover:not(:disabled) { background: rgba(6,16,30,.82); }
   button:active:not(:disabled) { transform: scale(.94); }
   button:disabled { opacity: .38; cursor: default; }
   button.on { background: #ffca46; border-color: #fff; color: #16202e; font-weight: 700; }
-  .chip { padding: 8px 12px; font-size: 15px; min-width: 54px; }
-  .sp { padding: 6px 10px; font-size: 13px; }
+  .sp { padding: 9px 12px; font-size: 14px; text-align: center; }
   #spin { padding: 16px 34px; font-size: 24px; font-weight: 800; letter-spacing: .5px; }
   #info { position: absolute; left: 0; right: 0; bottom: 92px; text-align: center;
     font-size: 15px; opacity: .85; }
+  #panel { position: absolute; right: 24px; bottom: 108px; width: 360px;
+    background: rgba(10,22,38,.96); border: 1px solid rgba(255,255,255,.18);
+    border-radius: 16px; padding: 16px; pointer-events: auto; display: none;
+    box-shadow: 0 16px 48px rgba(0,0,0,.55); }
+  #panel h3 { font-size: 16px; margin-bottom: 14px; font-weight: 700; color: #eaf4ff;
+    padding-bottom: 10px; border-bottom: 1px solid rgba(255,255,255,.12); }
+  /* 小節標題：把「局數」跟「停止條件」分開，不再全部擠成一片按鈕 */
+  .sect { font-size: 12px; letter-spacing: .08em; opacity: .55; margin: 0 0 7px 2px; }
+  #counts { display: flex; gap: 5px; margin-bottom: 8px; }
+  .cnt { flex: 1; padding: 9px 0; font-size: 14px; }
+  .prow { display: flex; align-items: center; gap: 8px; margin-bottom: 14px;
+    border: 1px solid rgba(255,255,255,.14); border-radius: 10px; padding: 6px 10px; }
+  .prow.on { border-color: #ffca46; background: rgba(255,202,70,.10); }
+  .prow > span { font-size: 13px; opacity: .7; }
+  .prow .unit { opacity: .5; }
+  #cnt { flex: 1; min-width: 0; font: inherit; font-size: 17px; font-weight: 700;
+    color: #eaf4ff; background: none; border: none; outline: none; text-align: right;
+    font-variant-numeric: tabular-nums; }
+  #cnt::placeholder { font-size: 14px; font-weight: 400; opacity: .35; }
+  /* 數字框右邊的上下小箭頭會擠掉版面，拿掉 */
+  #cnt::-webkit-outer-spin-button, #cnt::-webkit-inner-spin-button {
+    -webkit-appearance: none; margin: 0; }
+  #cnt { -moz-appearance: textfield; appearance: textfield; }
+  #conds { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+  .cond { padding: 10px 12px; font-size: 14px; text-align: left; }
+  /* 金額條件：標題 + 玩家自己輸入的框 */
+  .prow.amt { margin-bottom: 0; padding: 5px 12px; }
+  .amtlabel { flex: 1; font-size: 14px; opacity: .9; }
+  .prow.amt input { flex: 0 0 96px; min-width: 0; font: inherit; font-size: 15px;
+    font-weight: 700; color: #eaf4ff; background: none; border: none; outline: none;
+    text-align: right; font-variant-numeric: tabular-nums; }
+  .prow.amt input::placeholder { font-size: 13px; font-weight: 400; opacity: .35; }
+  .prow.amt input::-webkit-outer-spin-button,
+  .prow.amt input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+  .prow.amt input { -moz-appearance: textfield; appearance: textfield; }
+  #autostart { width: 100%; padding: 13px; font-size: 17px; font-weight: 700; }
   @media (max-width: 820px) {
-    #chips { max-width: 55%; }
-    .chip { padding: 6px 9px; font-size: 13px; min-width: 44px; }
+    .step { width: 38px; height: 36px; font-size: 19px; }
+    #betval { min-width: 74px; font-size: 17px; }
     #spin { padding: 12px 22px; font-size: 19px; }
+    #panel { width: calc(100vw - 48px); right: 24px; }
   }
 </style>
 </head>
@@ -50,7 +105,7 @@
  * 以下由 tools/genoffline.js 自動產生，請勿直接修改這個檔案。
  * 演算法來源：assets/scripts/AviaPath.ts
  * 渲染來源：  tools/offline/renderer.js
- * 產生時間：  2026-08-10T08:21:11.410Z
+ * 產生時間：  2026-08-31T04:03:41.570Z
  * ============================================================ */
 
 /* ───────────────── 演算法（AviaPath.ts） ───────────────── */
@@ -93,19 +148,26 @@
                           
  
 
-                                                                              
+/** x 是世界座標（px）。收尾段飛機會滑行減速然後停下,所以 x 不再等於 tick × PX_PER_TICK。 */
+                                                                                         
 
                       
                                                            
-                                                                        
+                                                        
+                                   
 
 /**
- * 結束方式：
- *   LAND       降落在目的艦 → 結算
- *   SPLASH     直接墜海 → 歸零
- *   SLIDE_OFF  該墜海的位置剛好有一艘航母 → 觸艦、滑行、從甲板尾端翻落海中 → 一樣歸零
+ * 結束方式。
+ *
+ * 觸艦之後的表演兩種結果完全共用：滑行一段距離 → 半截機身懸在甲板外 → 搖晃傾斜。
+ * 玩家在搖晃結束前不知道會是哪一種 —— 這是整局張力的最後一個高點。
+ *
+ *   DECK_LAND  乾淨停在甲板上,不懸空、不搖晃 → 降落成功
+ *   EDGE_HOLD  衝到邊緣半截懸空,搖晃後穩住 → 降落成功
+ *   EDGE_TIP   搖晃後前傾,翻落海中     → 降落失敗
+ *   SPLASH     根本沒碰到船,直接砸進海裡 → 失敗
  */
-                                                         
+                                                                           
 
                        
                  
@@ -124,7 +186,7 @@
                     
                     
                        
-                                     
+                                              
                                                 
                     
                           
@@ -133,8 +195,10 @@
                                          
                                                   
                        
-                                                      
+                                                
                       
+                                    
+                       
                                                    
                                                 
                                                          
@@ -219,6 +283,26 @@ const PHYS = {
     MAX_GAP: 22,
     TAKEOFF_TICKS: 10,
 
+    // ── 甲板降落表演 ──
+    //   觸艦 → 減速滑行 → 半截機身懸在甲板外 → 搖晃 → 穩住 or 前傾翻落
+    SLIDE_DECEL_TICKS: 11,  // 滑行減速持續幾 tick
+    EDGE_OVERHANG: 0,       // 停下時機身中心相對甲板尾端的位移。0 = 剛好半截在外
+    MIN_SLIDE_ROOM: 90,     // 觸艦點離甲板尾端至少要有這麼多 px,否則當作沒撞到
+    // 搖晃 = 機身以甲板邊緣為支點往前傾,再回到水平,重複 WOBBLE_CYCLES 次。
+    // 只會往前傾（機首朝下）—— 往後最多就是水平,不會機首朝上。
+    // 不是高頻抖動 —— 慢慢晃兩下就好,那個停頓才是張力所在。
+    WOBBLE_TICKS: 34,       // 搖晃總長度。這個值決定快慢：越大越慢
+    WOBBLE_AMP_DEG: 19,     // 前傾的最大角度（回來最多到 0,不會變正）
+    WOBBLE_CYCLES: 2,       // 晃幾下（一下 = 前傾下去 + 回到水平）
+    WOBBLE_SINK: 5,         // 搖晃時機身中心的上下位移。0 = 完全只有轉動,不上下浮
+    GLIDE_TO_DECK_MAX: 70,  // 為了湊 EDGE_TIP,最多可以往前滑幾 tick 去找船
+    DECK_STOP_MIN: 0.35,    // 乾淨降落時停在甲板寬度的哪個比例（0 = 近端邊緣）
+    DECK_STOP_MAX: 0.70,
+    SETTLE_TICKS: 12,       // 穩住收斂
+    HOLD_PITCH_DEG: -9,     // 穩住後停在邊緣的微傾角
+    TIP_TICKS: 13,          // 前傾翻落
+    TIP_PITCH_DEG: -78,
+
     // ── 收尾 ──
     LAND_RATE: 9,           // 降落段每 tick 下降 px
     LAND_TICKS_MIN: 10,
@@ -280,6 +364,39 @@ function carrierDeckAt(x        )                {
         if (Math.abs(x - cx) <= SEA.HALF_W) return cx;
     }
     return null;
+}
+
+/**
+ * 結算動畫的出現權重。相對值,**0 = 永遠不出現**。
+ *
+ * ⚠ 預設只剩兩種結局：**碰到甲板就是成功,沒碰到就是落海**。
+ *   兩個「搖晃」結局（EDGE_HOLD / EDGE_TIP）預設關掉 ——
+ *   「差點掉出去」那段懸念拿掉了,降落改成單純的滑行減速停在甲板上。
+ *   要把懸念加回來就把對應的權重調成非 0（Inspector ⑧ 結算動畫權重),程式都還在。
+ *
+ * 贏局在 DECK_LAND / EDGE_HOLD 之間抽;輸局在 SPLASH / EDGE_TIP 之間抽。
+ * 演算法會為了達成抽到的結局去「安排幾何」（例如把下降段拉長到剛好落在某艘船的甲板上）,
+ * 而不是反過來讓幾何決定結局 —— 所以這幾個權重是真的說了算。
+ *
+ * 唯一的例外：EDGE_TIP 需要前方在合理距離內有船。如果 SEA.SPACING 設得很大或設成 0,
+ * 找不到船時會退回 SPLASH。
+ */
+const ENDING_WEIGHTS = {
+    winDeckLand: 1,   // 乾淨停在甲板上
+    winEdgeHold: 0,   // 衝到邊緣半截懸空,搖晃後穩住
+    loseSplash: 1,    // 直接砸進海裡
+    loseEdgeTip: 0,   // 觸艦、搖晃,最後前傾翻落
+};
+
+function configureEndingWeights(p                                ) {
+    Object.assign(ENDING_WEIGHTS, p);
+}
+
+/** 二選一的權重抽選。回傳 true 表示選中第一項。兩個都 0 時視為各半。 */
+function pickByWeight(rng     , a        , b        )          {
+    const wa = Math.max(0, a), wb = Math.max(0, b);
+    if (wa + wb <= 0) return rng.chance(0.5);
+    return rng.next() * (wa + wb) < wa;
 }
 
 const STYLE_RANGE = {
@@ -490,11 +607,12 @@ function rollStyle(rng     )        {
                     
                                         
                          
-                        
+                     
                          
                                                                         
                        
                       
+                       
  
 
 const easeOutCubic = (s        ) => 1 - Math.pow(1 - s, 3);
@@ -581,7 +699,6 @@ function buildRoute(ops           , landed         , rng     , st       , gapSca
     const p0 = arcSegment(PHYS.DECK_Y, firstY + PHYS.GLIDE_DROP - PHYS.DECK_Y,
         PHYS.GLIDE_DROP, tk0, ys);
     riseWindows.push({ from: 0, to: Math.ceil(p0 * tk0) + 1 });
-    // 此時 ys.length === tk0 + 1,下一個索引就是第一個物件的 tick
 
     let cur = firstY;
 
@@ -593,12 +710,9 @@ function buildRoute(ops           , landed         , rng     , st       , gapSca
         const isLast = i === ops.length - 1;
         const jit = 1 + rng.range(-PHYS.GAP_JITTER, PHYS.GAP_JITTER);
         const segLen = isLast ? 0 : G(PHYS.BASE_GAP * st.gap * gapScale * jit);
-
-        // 最後一個物件後面接的是收尾段,只演完升／降本身就交棒
         const tailLen = Math.max(3, Math.round(PHYS.LAST_ARC_TICKS * st.gap * gapScale));
 
         if (ops[i].kind === 'ROCKET') {
-            // 飛彈：單調俯衝,不可能有上升
             const bottom = Math.max(PHYS.MIN_ALT, cur - PHYS.STEP_DOWN);
             if (isLast) {
                 diveSegment(cur, cur - bottom, tailLen, ys);
@@ -609,11 +723,9 @@ function buildRoute(ops           , landed         , rng     , st       , gapSca
             diveSegment(cur, cur - endY, segLen, ys);
             cur = ys[ys.length - 1];
         } else {
-            // 加值／乘算：一整段完整的彈道弧線,頂點 = 命中點 + STEP_UP
             const apexY = clampAlt(cur + PHYS.STEP_UP);
             const rise = apexY - cur;
             if (isLast) {
-                // 只演上升的那一半,頂點交給收尾段接著往下帶
                 arcSegment(cur, rise, 0, tailLen, ys);
                 riseWindows.push({ from: tick, to: tick + tailLen + 1 });
                 cur = ys[ys.length - 1];
@@ -626,67 +738,198 @@ function buildRoute(ops           , landed         , rng     , st       , gapSca
         }
     }
 
-    // ── 收尾 ──
-    let ending             = landed ? 'LAND' : 'SPLASH';
-    let slideFrom = -1;
+    // 飛行段的 x 就是等速前進;收尾段會自己接手（滑行要減速、停下）
+    const xs           = ys.map((_, i) => i * PHYS.PX_PER_TICK);
+    const ps                    = ys.map(() => null);
+
+    const end = appendEnding(xs, ys, ps, cur, landed, rng);
+
+    return {
+        xs, ys, ps, hits, riseWindows,
+        terminalTick: ys.length - 1,
+        ending: end.ending, slideFrom: end.slideFrom,
+        wobbleFrom: end.wobbleFrom, carrierX: end.carrierX,
+    };
+}
+
+/**
+ * 收尾表演：觸艦 → 減速滑行 → 半截機身懸在甲板外 → 搖晃 → 穩住 or 前傾翻落。
+ *
+ * 這一段飛機會「停下來」,所以 x 不能再等於 tick × PX_PER_TICK ——
+ * 整條航線改成明確的 (x, y, pitch) 三軌,滑行段 x 減速收斂到甲板尾端後就不動了。
+ *
+ * 兩種結果共用完全一樣的前半段,玩家在搖晃結束前不知道會是哪一種。
+ */
+function appendEnding(
+    xs          , ys          , ps                   ,
+    cur        , landed         , rng     ,
+)                                                                                  {
+
+    const PX = PHYS.PX_PER_TICK;
+    const D2R = Math.PI / 180;
+    const W = ENDING_WEIGHTS;
+    const push = (x        , y        , pitch               ) => { xs.push(x); ys.push(y); ps.push(pitch); };
+    const lastX = () => xs[xs.length - 1];
+
+    /**
+     * 觸艦 → 減速滑行到指定的 x 停下。機身保持水平。
+     * tick 數依滑行距離等比縮放,所以停在甲板中央和衝到尾端的「減速感」是一致的。
+     */
+    const slideTo = (target        , fullDist        ) => {
+        const from = lastX();
+        const dist = Math.max(PX, target - from);
+        const ratio = Math.max(0.25, Math.min(1, dist / Math.max(1, fullDist)));
+        const slideT = Math.max(4, Math.round(PHYS.SLIDE_DECEL_TICKS * (0.35 + 0.65 * ratio)));
+
+        const slideFrom = xs.length - 1;
+        for (let k = 1; k <= slideT; k++) {
+            const s = k / slideT;
+            // easeOutCubic：一觸艦就衝,然後明顯減速,最後幾 tick 幾乎不動
+            const x = from + dist * (1 - Math.pow(1 - s, 3));
+            const bounce = Math.max(0, 5 - k) * 1.6;      // 觸艦瞬間的彈跳
+            push(x, PHYS.DECK_Y + bounce, 0);
+        }
+        return slideFrom;
+    };
+
+    /** 滑到甲板尾端（機身中心停在邊緣 = 半截在外）→ 搖晃 */
+    const slideAndWobble = (deckCx        ) => {
+        const target = deckCx + SEA.HALF_W + PHYS.EDGE_OVERHANG;
+        const slideFrom = slideTo(target, SEA.HALF_W * 2);
+
+        // 搖晃：機身中心已經懸在邊緣,前後傾斜,看起來隨時會掉下去
+        const wobbleFrom = xs.length - 1;
+        const wT = Math.max(6, Math.round(PHYS.WOBBLE_TICKS));
+        const amp = PHYS.WOBBLE_AMP_DEG * D2R;
+        for (let k = 1; k <= wT; k++) {
+            const s = k / wT;
+            const decay = 1 - s * 0.55;                              // 慢慢收斂,但沒有完全停
+            // (1−cos)/2 永遠落在 0..1 → 傾角永遠 ≤ 0,只會前傾,回來最多回到水平。
+            // 一個完整週期 = 「前傾下去再回到水平」= 晃一下。
+            const w = (1 - Math.cos(Math.PI * 2 * PHYS.WOBBLE_CYCLES * s)) / 2;
+            const pitch = -amp * decay * w;
+            const sink = PHYS.WOBBLE_SINK * Math.abs(pitch) / Math.max(1e-6, amp);
+            push(target, PHYS.DECK_Y - sink, pitch);
+        }
+        return { slideFrom, wobbleFrom, target };
+    };
 
     if (landed) {
+        // ── 降落成功：下降到甲板 → 滑行 → 搖晃 → 穩住在邊緣 ──
         const fall = Math.max(0, cur - PHYS.DECK_Y);
         const endT = clampInt(fall / Math.max(1, PHYS.LAND_RATE), PHYS.LAND_TICKS_MIN, PHYS.LAND_TICKS_MAX);
         for (let t = 1; t <= endT; t++) {
             const s = t / endT;
-            ys.push(cur - fall * (s * s * (3 - 2 * s)));   // 由緩到急再拉平
-        }
-    } else {
-        // 墜海：逐 tick 往下掉。掉到甲板高度時如果底下剛好有一艘航母,
-        // 就改成「觸艦 → 滑行 → 從甲板尾端翻落海中」。
-        const base = ys.length - 1;
-        const fall = Math.max(0, cur - PHYS.WATER_Y);
-        const endT = clampInt(fall / Math.max(1, PHYS.SPLASH_RATE),
-            PHYS.SPLASH_TICKS_MIN, PHYS.SPLASH_TICKS_MAX);
-
-        let hitDeckAt = -1, deckCx = 0;
-        for (let t = 1; t <= endT; t++) {
-            const s = t / endT;
-            const y = cur - fall * s * s;                  // 拋物線加速砸下去
-            const tick = base + t;
-            if (y <= PHYS.DECK_Y) {
-                const cx = carrierDeckAt(tick * PHYS.PX_PER_TICK);
-                if (cx !== null) { hitDeckAt = tick; deckCx = cx; break; }
-            }
-            ys.push(y);
+            push(lastX() + PX, cur - fall * (s * s * (3 - 2 * s)), null);
         }
 
-        if (hitDeckAt >= 0) {
-            ending = 'SLIDE_OFF';
-            slideFrom = ys.length;                          // 觸艦的那一 tick
-            ys.push(PHYS.DECK_Y);
+        // 目的艦擺在「觸艦點剛好是近端邊緣」的位置
+        const carrierX = lastX() + SEA.HALF_W;
 
-            // 滑行到甲板尾端
-            const farEdge = deckCx + SEA.HALF_W;
-            const slideT = Math.max(3,
-                Math.ceil((farEdge - hitDeckAt * PHYS.PX_PER_TICK) / PHYS.PX_PER_TICK));
-            for (let k = 1; k <= slideT; k++) {
-                // 一點點彈跳,像真的在甲板上滑
-                ys.push(PHYS.DECK_Y + Math.max(0, 6 - k) * 1.2);
-            }
-            // 從甲板尾端翻落
-            const dropT = Math.max(5, Math.round(PHYS.DECK_Y / PHYS.SPLASH_RATE));
-            for (let k = 1; k <= dropT; k++) {
-                const s = k / dropT;
-                ys.push(PHYS.DECK_Y * (1 - s * s));
-            }
-        } else if (ys.length - 1 < base + endT) {
-            // 迴圈提前結束但沒碰到船（不該發生,保險）
-            for (let t = ys.length - base; t <= endT; t++) {
-                const s = t / endT;
-                ys.push(cur - fall * s * s);
-            }
+        // ── 乾淨降落：滑到甲板中段就停住,不懸空、不搖晃 ──
+        if (!pickByWeight(rng, W.winEdgeHold, W.winDeckLand)) {
+            const frac = rng.range(PHYS.DECK_STOP_MIN, PHYS.DECK_STOP_MAX);
+            const target = carrierX - SEA.HALF_W + frac * SEA.HALF_W * 2;
+            const slideFrom = slideTo(target, SEA.HALF_W * 2);
+            // 停穩：機身放平
+            const setT = Math.max(3, Math.round(PHYS.SETTLE_TICKS * 0.5));
+            for (let k = 1; k <= setT; k++) push(target, PHYS.DECK_Y, 0);
+            return { ending: 'DECK_LAND', slideFrom, wobbleFrom: -1, carrierX };
         }
-        ys[ys.length - 1] = PHYS.WATER_Y;                   // 終點釘死在水面
+
+        const { slideFrom, wobbleFrom } = slideAndWobble(carrierX);
+
+        // 穩住：傾角收斂到一個小角度,停在邊緣不動
+        const setT = Math.max(4, PHYS.SETTLE_TICKS);
+        const hold = PHYS.HOLD_PITCH_DEG * D2R;
+        const fromPitch = ps[ps.length - 1]          ;
+        for (let k = 1; k <= setT; k++) {
+            const s = k / setT;
+            const e = 1 - Math.pow(1 - s, 3);
+            push(lastX(), PHYS.DECK_Y, fromPitch + (hold - fromPitch) * e);
+        }
+        return { ending: 'EDGE_HOLD', slideFrom, wobbleFrom, carrierX };
     }
 
-    return { ys, hits, riseWindows, terminalTick: ys.length - 1, ending, slideFrom };
+    // ── 落海 ──
+    //
+    // 先用權重決定「想要哪一種結局」,再把幾何排成那樣 —— 而不是讓幾何決定結局。
+    // 這樣兩種墜落表演的出現率才真的可以用 Inspector 的權重控制。
+    const wantTip = pickByWeight(rng, W.loseEdgeTip, W.loseSplash);
+
+    let deckCx                = null;
+    if (wantTip) {
+        // 往前找第一艘「還有足夠滑行空間」的船,把下降段拉到剛好在它甲板上觸艦
+        const x0 = lastX();
+        const reach = SEA.SPACING * 2 + SEA.HALF_W * 4;
+        for (let probe = x0 + PX; probe < x0 + reach; probe += PX * 0.5) {
+            const c = carrierDeckAt(probe);
+            if (c === null) continue;
+            const touch = Math.max(probe, c - SEA.HALF_W + 4);
+            if (c + SEA.HALF_W - touch <= PHYS.MIN_SLIDE_ROOM) continue;   // 沒有滑行空間
+            const n = Math.round((touch - x0) / PX);
+            if (n < PHYS.SPLASH_TICKS_MIN) continue;                       // 太近,來不及下降
+            if (n > PHYS.GLIDE_TO_DECK_MAX) break;                         // 太遠,滑太久不好看
+            deckCx = c;
+            for (let k = 1; k <= n; k++) {
+                const t = k / n;
+                push(x0 + k * PX, cur - (cur - PHYS.DECK_Y) * (t * t * (3 - 2 * t)), null);
+            }
+            break;
+        }
+    }
+
+    if (deckCx === null) {
+        // 直接砸海。落點要避開所有甲板,否則飛機會穿過船身。
+        const fall0 = Math.max(0, cur - PHYS.WATER_Y);
+        const x0 = lastX();
+        const clear = (n        ) => {
+            for (let k = 1; k <= n; k++) {
+                const y = cur - fall0 * (k / n) * (k / n);
+                if (y <= PHYS.DECK_Y && carrierDeckAt(x0 + k * PX) !== null) return false;
+            }
+            return true;
+        };
+        const base = clampInt(fall0 / Math.max(1, PHYS.SPLASH_RATE),
+            PHYS.SPLASH_TICKS_MIN, PHYS.SPLASH_TICKS_MAX);
+        let endT = base;
+        for (let d = 0; d <= PHYS.SPLASH_TICKS_MAX; d++) {          // 由近而遠找一個不會穿船的長度
+            const a = base - d, b = base + d;
+            if (a >= PHYS.SPLASH_TICKS_MIN && clear(a)) { endT = a; break; }
+            if (b <= PHYS.SPLASH_TICKS_MAX * 2 && clear(b)) { endT = b; break; }
+        }
+        for (let k = 1; k <= endT; k++) {
+            const t = k / endT;
+            push(x0 + k * PX, cur - fall0 * t * t, null);           // 拋物線加速砸下去
+        }
+        ys[ys.length - 1] = PHYS.WATER_Y;
+        const carrierX = lastX() +
+            (rng.chance(0.7) ? rng.range(240, 680) : rng.range(960, 2100));
+        return { ending: 'SPLASH', slideFrom: -1, wobbleFrom: -1, carrierX };
+    }
+
+    {
+        // 該墜海卻剛好停在航母上 → 滑行、搖晃,最後前傾翻落
+        const { slideFrom, wobbleFrom } = slideAndWobble(deckCx);
+
+        const tipT = Math.max(6, PHYS.TIP_TICKS);
+        const tip = PHYS.TIP_PITCH_DEG * Math.PI / 180;
+        const fromPitch = ps[ps.length - 1]          ;
+        const fromY = ys[ys.length - 1];
+        for (let k = 1; k <= tipT; k++) {
+            const s = k / tipT;
+            // 機首先沉下去,然後整架翻落水面
+            push(lastX() + PX * 0.35 * s,
+                fromY * (1 - s * s),
+                fromPitch + (tip - fromPitch) * (s * s));
+        }
+        ys[ys.length - 1] = PHYS.WATER_Y;
+
+        // 目的艦擺得離這艘船夠遠,免得兩艘疊在一起
+        const carrierX = deckCx + SEA.HALF_W * 2 + 120 +
+            (rng.chance(0.7) ? rng.range(80, 520) : rng.range(900, 2000));
+        return { ending: 'EDGE_TIP', slideFrom, wobbleFrom, carrierX };
+    }
 }
 
 function planFlight(ops           , landed         , rng     , st       )             {
@@ -700,7 +943,7 @@ function planFlight(ops           , landed         , rng     , st       )       
         R = buildRoute(ops, landed, rng, st, gapScale);
     }
 
-    const { ys, hits, riseWindows, terminalTick, ending, slideFrom } = R;
+    const { xs, ys, ps, hits, riseWindows, terminalTick } = R;
     const maxPitch = PHYS.PITCH_MAX_DEG * Math.PI / 180;
     const frames          = [];
     let peak = 0;
@@ -708,19 +951,18 @@ function planFlight(ops           , landed         , rng     , st       )       
         const y = ys[t];
         peak = Math.max(peak, y);
         const dy = (ys[Math.min(t + 1, terminalTick)] - ys[Math.max(t - 1, 0)]) / 2;
-        const pitch = Math.max(-maxPitch, Math.min(maxPitch, Math.atan2(dy, PHYS.PITCH_RUN)));
-        frames.push({ tick: t, y, vy: dy, pitch });
+        // 收尾段（滑行／搖晃／翻落）用腳本指定的傾角,其餘由曲線斜率導出
+        const pitch = ps[t] !== null ? ps[t] 
+            : Math.max(-maxPitch, Math.min(maxPitch, Math.atan2(dy, PHYS.PITCH_RUN)));
+        frames.push({ tick: t, x: xs[t], y, vy: dy, pitch });
     }
 
-    // 航母位置：贏 = 降落點;輸 = 墜海點再往前一段（看得到、到不了）
-    const minGapPx = ending === 'SLIDE_OFF' ? SEA.HALF_W * 2 + 120 : 0;
-    const minGapTicks = Math.ceil(minGapPx / PHYS.PX_PER_TICK);
-    const carrierTick = landed
-        ? terminalTick
-        : terminalTick + Math.max(minGapTicks,
-            rng.chance(0.7) ? 6 + rng.int(11) : 24 + rng.int(28));
-
-    return { frames, hits, terminalTick, carrierTick, peakAltitude: peak, riseWindows, ending, slideFrom };
+    return {
+        frames, hits, terminalTick,
+        carrierX: R.carrierX,
+        peakAltitude: peak, riseWindows,
+        ending: R.ending, slideFrom: R.slideFrom, wobbleFrom: R.wobbleFrom,
+    };
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -833,8 +1075,9 @@ function buildPerformance(result             )                    {
             beats.push({ tick: o.tick, type: 'NEAR_MISS', objId: o.id });
         }
     }
-    beats.push({ tick: Math.max(1, plan.carrierTick - 16), type: 'ENDGAME_REVEAL' });
-    if (plan.ending === 'SLIDE_OFF') beats.push({ tick: plan.slideFrom, type: 'DECK_SLIDE' });
+    beats.push({ tick: Math.max(1, plan.terminalTick - 24), type: 'ENDGAME_REVEAL' });
+    if (plan.slideFrom >= 0) beats.push({ tick: plan.slideFrom, type: 'DECK_TOUCH' });
+    if (plan.wobbleFrom >= 0) beats.push({ tick: plan.wobbleFrom, type: 'DECK_WOBBLE' });
     beats.push({ tick: plan.terminalTick, type: result.landed ? 'LAND' : 'SPLASH' });
     beats.sort((a, b) => a.tick - b.tick);
 
@@ -843,8 +1086,8 @@ function buildPerformance(result             )                    {
     return {
         roundId: result.roundId,
         landed: result.landed,
-        totalTicks: Math.max(plan.carrierTick, plan.terminalTick) + PHYS.TAIL_TICKS,
-        carrierTick: plan.carrierTick,
+        totalTicks: plan.terminalTick + PHYS.TAIL_TICKS,
+        carrierX: plan.carrierX,
         terminalTick: plan.terminalTick,
         frames: plan.frames,
         objects,
@@ -855,6 +1098,7 @@ function buildPerformance(result             )                    {
         riseWindows: plan.riseWindows,
         ending: plan.ending,
         slideFrom: plan.slideFrom,
+        wobbleFrom: plan.wobbleFrom,
         exact,
         style,
     };
@@ -868,6 +1112,7 @@ function sampleFrame(script                   , t        )        {
     const a = t - i;
     return {
         tick: t,
+        x: f[i].x + (f[j].x - f[i].x) * a,
         y: f[i].y + (f[j].y - f[i].y) * a,
         vy: f[i].vy + (f[j].vy - f[i].vy) * a,
         pitch: f[i].pitch + (f[j].pitch - f[i].pitch) * a,
@@ -937,6 +1182,13 @@ const CFG = {
 };
 
 const BET_OPTIONS = [0.1, 0.5, 1, 2, 5, 10, 25, 50, 100];
+/** 自動下注局數選項。最後一個是無限循環 */
+const AUTO_COUNTS = [10, 25, 50, 100, Infinity];
+/** 「自訂」局數的上限：十位數，也就是兩位數 1–99 */
+const AUTO_COUNT_MAX = 99;
+/** 停止條件金額的上限。玩家自己輸入絕對金額，0 = 那條關閉 */
+const STOP_AMOUNT_MAX = 999999;
+const AUTO_INTERVAL = 0.5;
 const SPEED_KEYS = ['slow', 'medium', 'fast', 'ultra'];
 const SPEED_LABELS = ['慢', '中', '快', '極快'];
 
@@ -974,6 +1226,15 @@ function resize() {
     canvas.style.width = Math.round(DW * scale) + 'px';
     canvas.style.height = Math.round(DH * scale) + 'px';
     ctx.setTransform(scale * dpr, 0, 0, scale * dpr, 0, 0);
+
+    // DOM 的 UI 層用同一個 scale 疊回畫布上 —— 它是照 1280x720 排的，
+    // 縮放後每一顆按鈕都跟畫布上的東西維持固定關係，不會在小視窗下跑掉。
+    const ui = document.getElementById('ui');
+    if (ui) {
+        ui.style.left = Math.round((w - DW * scale) / 2) + 'px';
+        ui.style.top = Math.round((h - DH * scale) / 2) + 'px';
+        ui.style.transform = `scale(${scale})`;
+    }
 }
 window.addEventListener('resize', resize);
 
@@ -991,8 +1252,26 @@ const S = {
     trail: [], fx: [], floats: [],
     consumed: new Set(),      // 已被吃掉的物件 id
     big: null,                // { text, color, t }
-    autoSpin: false,
+    // 自動下注。金額門檻存的是「下注額的倍數」，改下注額會等比縮放。
+    // countIdx = CUSTOM_COUNT(-1) 代表用玩家自己填的 custom
+    auto: {
+        on: false, countIdx: 0, custom: 0, left: 0, baseBalance: 0,
+        // 三個金額門檻是玩家輸入的絕對金額（0 = 這條關閉）
+        stopAnyWin: false, winAmt: 0, upAmt: 0, downAmt: 0, panel: false,
+    },
+    autoTimer: 0,
+    speedMenu: false,        // 速度選單展開中
 };
+
+const CUSTOM_COUNT = -1;
+
+/** 這次自動要跑幾局。-1 = 無限，0 = 還沒決定（選了自訂但沒填） */
+function autoRounds() {
+    const A = S.auto;
+    if (A.countIdx === CUSTOM_COUNT) return clamp(A.custom | 0, 0, AUTO_COUNT_MAX);
+    const v = AUTO_COUNTS[A.countIdx];
+    return v === Infinity ? -1 : Math.max(1, v | 0);
+}
 
 const bet = () => BET_OPTIONS[S.betIdx];
 
@@ -1077,7 +1356,7 @@ function paintCarrier(cx, waterUp, s, haze, destination) {
 function drawSeaCarriers(scroll) {
     if (SEA.SPACING <= 0) return;
     const W = SEA.HALF_W * 2, gap = SEA.SPACING;
-    const endX = (S.script ? S.script.carrierTick : 30) * PHYS.PX_PER_TICK;
+    const endX = S.script ? S.script.carrierX : 30 * PHYS.PX_PER_TICK;
     const i0 = Math.floor((-scroll - DW * 0.4) / gap) - 1;
     const i1 = Math.ceil((-scroll + DW * 1.4) / gap) + 1;
     for (let i = i0; i <= i1; i++) {
@@ -1191,7 +1470,10 @@ function drawTrail(scroll) {
     }
 }
 
-function drawHud(frame) {
+/** HUD 進度條的右緣（設計座標）。左緣由文字寬度決定，所以只固定右邊 */
+const HUD_BAR_RIGHT = 430;
+
+function drawHud(fr) {
     const s = S.script;
     const bar = (x, yUp, w, p, col) => {
         ctx.fillStyle = 'rgba(255,255,255,0.13)';
@@ -1199,16 +1481,26 @@ function drawHud(frame) {
         ctx.fillStyle = col;
         ctx.fillRect(x, up(yUp + 10), Math.max(6, w * clamp(p, 0, 1)), 10);
     };
-    const dist = clamp(S.t / Math.max(1, s.carrierTick), 0, 1);
-    const alt = clamp(frame.y / PHYS.ALT_DISPLAY_MAX, 0, 1);
-    bar(150, DH - 47, 210, dist, CFG.accent);
-    bar(150, DH - 81, 210, alt, CFG.hud);
+    const dist = clamp(fr.x / Math.max(1, s.carrierX), 0, 1);
+    const alt = clamp(fr.y / PHYS.ALT_DISPLAY_MAX, 0, 1);
 
     const u = CFG.metersPerPx, un = CFG.distanceUnit;
     ctx.font = '20px system-ui,sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
     ctx.fillStyle = CFG.hud;
-    ctx.fillText(`距離 ${fmtLen(S.t * PHYS.PX_PER_TICK * u)} / ${fmtLen(s.carrierTick * PHYS.PX_PER_TICK * u)} ${un}`, 36, up(DH - 42));
-    ctx.fillText(`高度 ${fmtLen(frame.y * u)} ${un}`, 36, up(DH - 76));
+    const sDist = `距離 ${fmtLen(fr.x * u)} / ${fmtLen(s.carrierX * u)} ${un}`;
+    const sAlt = `高度 ${fmtLen(fr.y * u)} ${un}`;
+    ctx.fillText(sDist, 36, up(DH - 42));
+    ctx.fillText(sAlt, 36, up(DH - 76));
+
+    // 進度條讓開文字 —— 距離讀數會長到「1,234 / 2,088 m」，寫死起點會被蓋住。
+    // 量的是「這一局最長會長成什麼樣」而不是當下的字，否則位數一跳條就左右抖。
+    // 飛行距離不會超過總長，所以拿總長填兩邊就是這一局的上界。
+    const worst = fmtLen(s.carrierX * u);
+    const barX = 36 + Math.max(
+        ctx.measureText(`距離 ${worst} / ${worst} ${un}`).width,
+        ctx.measureText(`高度 ${worst} ${un}`).width) + 16;
+    bar(barX, DH - 47, Math.max(60, HUD_BAR_RIGHT - barX), dist, CFG.accent);
+    bar(barX, DH - 81, Math.max(60, HUD_BAR_RIGHT - barX), alt, CFG.hud);
 
     ctx.font = 'bold 40px system-ui,sans-serif'; ctx.textAlign = 'center';
     ctx.fillStyle = S.targetBalance >= 20 ? CFG.accent : CFG.text;
@@ -1302,7 +1594,8 @@ function onBeat(b) {
             S.shake = 1;
             break;
         case 'LAND': {
-            pushFx('SMOKE', px, CFG.waterScreenY + PHYS.DECK_Y, 0.9, 18, 130, '#ffffff');
+            // 不放煙 —— 觸艦（DECK_TOUCH）那一下已經冒過了，
+            // 這裡飛機早就停穩，再噴一次煙會像憑空冒出來
             S.shake = 0.8;
             const m = s.finalBalance;
             S.big = {
@@ -1314,12 +1607,17 @@ function onBeat(b) {
             syncUi();
             break;
         }
-        case 'DECK_SLIDE':
-            // 該墜海卻剛好撞上一艘航母 —— 觸艦、擦出火花、開始滑行
-            pushFx('SMOKE', px, CFG.waterScreenY + PHYS.DECK_Y, 1.1, 14, 120, '#ffffff');
+        case 'DECK_TOUCH':
+            // 觸艦：輪胎冒煙 + 火花，開始減速滑行
+            pushFx('SMOKE', px, CFG.waterScreenY + PHYS.DECK_Y, 1.2, 14, 130, '#ffffff');
             pushFx('SPRAY', px, CFG.waterScreenY + PHYS.DECK_Y, 0.5, 8, 90, '#ffd678');
-            S.shake = 0.9;
-            S.big = { text: '停在艦上了…', color: CFG.text, t: 0 };
+            S.shake = 0.7;
+            break;
+
+        case 'DECK_WOBBLE':
+            // 半截機身已經懸在甲板外，開始搖晃 —— 這時還不知道會穩住還是掉下去
+            S.big = { text: '…', color: CFG.text, t: 0 };
+            S.shake = Math.max(S.shake, 0.35);
             break;
 
         case 'SPLASH':
@@ -1339,11 +1637,13 @@ function onBeat(b) {
 // ══════════════════════════════════════════════════════════
 
 function idleFrame(clock) {
-    return { tick: 0, y: PHYS.DECK_Y + 18 + Math.sin(clock * 2) * 4, vy: 0, pitch: Math.sin(clock * 1.3) * 0.035 };
+    return { tick: 0, x: 0, y: PHYS.DECK_Y + 18 + Math.sin(clock * 2) * 4, vy: 0, pitch: Math.sin(clock * 1.3) * 0.035 };
 }
 
 function spin() {
     if (S.state !== 'IDLE') return;
+    S.auto.panel = false;
+    S.speedMenu = false;
     let b = bet();
     if (S.balance < b) {
         const best = BET_OPTIONS.filter(v => v <= S.balance).pop();
@@ -1361,6 +1661,46 @@ function spin() {
     syncUi();
 }
 
+// ── 自動下注 ──────────────────────────────────────────────
+
+function toggleAuto() {
+    const A = S.auto;
+    if (A.on) { stopAuto('手動停止'); return; }
+    if (S.balance < bet()) { S.info = '餘額不足'; syncUi(); return; }
+    const rounds = autoRounds();
+    if (rounds === 0) { S.info = '請先輸入自動下注的局數'; syncUi(); return; }
+    A.on = true;
+    A.left = rounds;
+    A.baseBalance = S.balance;
+    A.panel = false;
+    S.info = '';
+    syncUi();
+    spin();
+}
+
+function stopAuto(reason) {
+    S.auto.on = false; S.auto.left = 0; S.autoTimer = 0;
+    S.info = '自動下注結束：' + reason;
+    syncUi();
+}
+
+/** 一局結算完檢查停止條件。回傳 true 表示已經停了。 */
+function checkAutoStop() {
+    const A = S.auto;
+    if (!A.on) return true;
+    const win = S.lastWin, delta = S.balance - A.baseBalance;
+    const cash = v => "$" + money(v);
+
+    if (A.stopAnyWin && win > 0) { stopAuto('任何勝利'); return true; }
+    if (A.winAmt > 0 && win >= A.winAmt) { stopAuto('單次獎金達 ' + cash(win)); return true; }
+    if (A.upAmt > 0 && delta >= A.upAmt) { stopAuto('餘額增加 ' + cash(delta)); return true; }
+    if (A.downAmt > 0 && -delta >= A.downAmt) { stopAuto('餘額減少 ' + cash(-delta)); return true; }
+    if (A.left > 0) A.left--;
+    if (A.left === 0) { stopAuto('局數跑完'); return true; }
+    if (S.balance < bet()) { stopAuto('餘額不足'); return true; }
+    return false;
+}
+
 let last = performance.now();
 function frame(now) {
     const dt = Math.min((now - last) / 1000, 0.05);
@@ -1368,6 +1708,10 @@ function frame(now) {
 
     if (S.state === 'IDLE') {
         render(dt, 0, idleFrame(S.clock), false);
+        if (S.autoTimer > 0) {                       // 自動下注的局間隔
+            S.autoTimer -= dt;
+            if (S.autoTimer <= 0) { S.autoTimer = 0; syncUi(); spin(); }
+        }
     } else {
         const s = S.script, ms = TICK_MS[S.speed];
         if (S.state === 'PLAY') {
@@ -1378,8 +1722,9 @@ function frame(now) {
             S.endTimer += dt;
             if (S.endTimer >= 1.8) {
                 S.state = 'IDLE'; S.script = null; S.camY = 0; S.sinking = 0;
-                S.consumed.clear(); S.big = null; syncUi();
-                if (S.autoSpin) setTimeout(spin, 400);
+                S.consumed.clear(); S.big = null;
+                if (S.auto.on && !checkAutoStop()) S.autoTimer = AUTO_INTERVAL;
+                else syncUi();
                 requestAnimationFrame(frame); return;
             }
         }
@@ -1391,7 +1736,8 @@ function frame(now) {
 
 function render(dt, t, fr, playing) {
     const s = S.script;
-    const planeX = t * PHYS.PX_PER_TICK;
+    // x 由腳本給 —— 收尾滑行段飛機會減速停下，不再等速前進
+    const planeX = fr.x;
     const scroll = DW * CFG.planeScreenXRatio - planeX;
 
     if (S.sinking > 0) S.sinking += dt * 46;
@@ -1413,7 +1759,7 @@ function render(dt, t, fr, playing) {
 
     // 起飛艦與目的艦
     paintCarrier(scroll, CFG.waterScreenY - S.camY, 1, 0, false);
-    paintCarrier((s ? s.carrierTick : 30) * PHYS.PX_PER_TICK + scroll, CFG.waterScreenY - S.camY, 1, 0, true);
+    paintCarrier((s ? s.carrierX : 30 * PHYS.PX_PER_TICK) + scroll, CFG.waterScreenY - S.camY, 1, 0, true);
 
     if (s && CFG.showDebugPath) {
         ctx.strokeStyle = 'rgba(255,255,255,0.25)'; ctx.lineWidth = 2; ctx.beginPath();
@@ -1475,66 +1821,217 @@ function render(dt, t, fr, playing) {
 //  UI（HTML，不畫在 canvas 上）
 // ══════════════════════════════════════════════════════════
 
-let elChips, elSpin, elSpeeds, elBalance, elBet, elWin, elInfo;
+let elBetVal, elBetDn, elBetUp, elSpin, elSpeeds, elSpeedBtn, elBalance, elBet, elWin, elInfo;
+let elAuto, elPanel, elCounts, elConds, elAutoStart, elCustom;
+let elCondAnyWin, elAmounts = [];
 
 function buildUi() {
     const ui = document.getElementById('ui');
     ui.innerHTML = `
       <div class="row top">
-        <div><b id="bal"></b><span id="betl"></span></div>
+        <div></div>
         <div id="win"></div>
       </div>
+      <div id="readout"><b id="bal"></b><span id="betl"></span></div>
       <div class="row bottom">
-        <div id="chips"></div>
+        <div id="stepper">
+          <button id="betdn" class="step">−</button>
+          <span id="betval"></span>
+          <button id="betup" class="step">＋</button>
+        </div>
         <div class="right">
-          <div id="speeds"></div>
+          <div id="speedwrap">
+            <div id="speeds"></div>
+            <button id="speedbtn"></button>
+          </div>
+          <button id="auto">AUTO</button>
           <button id="spin">SPIN</button>
         </div>
       </div>
-      <div id="info"></div>`;
+      <div id="info"></div>
+      <div id="panel">
+        <h3>自動下注</h3>
+        <div class="sect">局數</div>
+        <div id="counts"></div>
+        <div class="prow custom">
+          <span>自訂</span>
+          <input id="cnt" type="number" inputmode="numeric" min="1" max="${AUTO_COUNT_MAX}"
+                 placeholder="1–${AUTO_COUNT_MAX}">
+          <span class="unit">局</span>
+        </div>
+        <div class="sect">停止條件（可同時開）</div>
+        <div id="conds"></div>
+        <button id="autostart">開始自動</button>
+      </div>`;
 
-    elChips = document.getElementById('chips');
+    elBetVal = document.getElementById('betval');
+    elBetDn = document.getElementById('betdn');
+    elBetUp = document.getElementById('betup');
     elSpeeds = document.getElementById('speeds');
+    elSpeedBtn = document.getElementById('speedbtn');
     elSpin = document.getElementById('spin');
     elBalance = document.getElementById('bal');
     elBet = document.getElementById('betl');
     elWin = document.getElementById('win');
     elInfo = document.getElementById('info');
 
-    BET_OPTIONS.forEach((v, i) => {
-        const b = document.createElement('button');
-        b.className = 'chip'; b.textContent = '$' + trimNum(v);
-        b.onclick = () => { if (S.state === 'IDLE') { S.betIdx = i; syncUi(); } };
-        elChips.appendChild(b);
-    });
+    // 下注 ± 一階，循環：在最小的按 − 跳到最大，在最大的按 ＋ 回到最小
+    const stepBet = d => {
+        if (S.state !== 'IDLE' || S.auto.on) return;
+        const n = BET_OPTIONS.length;
+        S.betIdx = ((S.betIdx + d) % n + n) % n;
+        syncUi();
+    };
+    elBetDn.onclick = () => stepBet(-1);
+    elBetUp.onclick = () => stepBet(+1);
+
+    // 速度選單：點主鍵往上展開，選完就收
     SPEED_LABELS.forEach((s, i) => {
         const b = document.createElement('button');
         b.className = 'sp'; b.textContent = s;
-        b.onclick = () => { S.speed = SPEED_KEYS[i]; syncUi(); };
+        b.onclick = () => { S.speed = SPEED_KEYS[i]; S.speedMenu = false; syncUi(); };
         elSpeeds.appendChild(b);
     });
-    elSpin.onclick = spin;
+    elSpeedBtn.onclick = () => {
+        S.speedMenu = !S.speedMenu;
+        S.auto.panel = false;          // 一次只開一個浮層
+        syncUi();
+    };
+    elSpin.onclick = () => { if (S.auto.on) stopAuto('手動停止'); else spin(); };
+
+    // ── 自動下注面板 ──
+    elAuto = document.getElementById('auto');
+    elPanel = document.getElementById('panel');
+    elCounts = document.getElementById('counts');
+    elConds = document.getElementById('conds');
+    elAutoStart = document.getElementById('autostart');
+
+    elAuto.onclick = () => {
+        if (S.auto.on) return;
+        S.auto.panel = !S.auto.panel;
+        S.speedMenu = false;
+        syncUi();
+    };
+    elAutoStart.onclick = toggleAuto;
+
+    AUTO_COUNTS.forEach((v, i) => {
+        const b = document.createElement('button');
+        b.className = 'cnt';
+        b.textContent = v === Infinity ? '∞' : String(v);
+        b.onclick = () => { if (!S.auto.on) { S.auto.countIdx = i; syncUi(); } };
+        elCounts.appendChild(b);
+    });
+
+    // 自訂局數：只吃數字，超過上限就夾回去（貼上、按上下鍵、直接打都擋得住）
+    elCustom = document.getElementById('cnt');
+    elCustom.oninput = () => {
+        const digits = elCustom.value.replace(/\D/g, '').slice(0, String(AUTO_COUNT_MAX).length);
+        let v = digits ? clamp(parseInt(digits, 10), 0, AUTO_COUNT_MAX) : 0;
+        elCustom.value = v > 0 ? String(v) : '';
+        S.auto.custom = v;
+        S.auto.countIdx = CUSTOM_COUNT;   // 一開始打字就等於選了「自訂」
+        syncUi();
+    };
+    elCustom.onfocus = () => { if (!S.auto.on) { S.auto.countIdx = CUSTOM_COUNT; syncUi(); } };
+    // 第一條是純開關
+    const anyWin = document.createElement('button');
+    anyWin.className = 'cond';
+    anyWin.onclick = () => { if (!S.auto.on) { S.auto.stopAnyWin = !S.auto.stopAnyWin; syncUi(); } };
+    elConds.appendChild(anyWin);
+    elCondAnyWin = anyWin;
+
+    // 其餘三條：標題 + 玩家自己輸入金額的框（打多少就是多少，0 = 關閉）
+    elAmounts = [
+        ['winAmt', '單次獎金 ≥'],
+        ['upAmt', '餘額增加 ≥'],
+        ['downAmt', '餘額減少 ≥'],
+    ].map(([key, label]) => {
+        const row = document.createElement('div');
+        row.className = 'prow amt';
+        const t = document.createElement('span');
+        t.className = 'amtlabel';
+        t.textContent = label;
+        const cur = document.createElement('span');
+        cur.className = 'unit';
+        cur.textContent = '$';
+        const inp = document.createElement('input');
+        inp.type = 'number'; inp.inputMode = 'numeric';
+        inp.min = '0'; inp.max = String(STOP_AMOUNT_MAX);
+        inp.placeholder = '不限';
+        inp.oninput = () => {
+            const digits = inp.value.replace(/\D/g, '').slice(0, String(STOP_AMOUNT_MAX).length);
+            const v = digits ? clamp(parseInt(digits, 10), 0, STOP_AMOUNT_MAX) : 0;
+            inp.value = v > 0 ? String(v) : '';
+            S.auto[key] = v;
+            syncUi();
+        };
+        row.append(t, cur, inp);
+        elConds.appendChild(row);
+        return { row, inp, key };
+    });
 
     addEventListener('keydown', e => {
+        // 游標在自訂局數的輸入框裡時，鍵盤快捷鍵全部讓路
+        if (e.target && e.target.tagName === 'INPUT') return;
         if (e.code === 'Space') { e.preventDefault(); spin(); }
-        if (e.code === 'KeyA') { S.autoSpin = !S.autoSpin; syncUi(); if (S.autoSpin) spin(); }
+        if (e.code === 'KeyA') { S.auto.panel = !S.auto.panel; S.speedMenu = false; syncUi(); }
     });
     syncUi();
 }
 
 function syncUi() {
-    const idle = S.state === 'IDLE';
-    [...elChips.children].forEach((c, i) => {
-        c.classList.toggle('on', i === S.betIdx);
-        c.disabled = !idle;
-    });
-    [...elSpeeds.children].forEach((c, i) => c.classList.toggle('on', SPEED_KEYS[i] === S.speed));
-    elSpin.disabled = !idle;
-    elSpin.textContent = idle ? (S.autoSpin ? 'AUTO' : 'SPIN') : '飛行中';
-    elBalance.textContent = `餘額 $${money(S.balance)}`;
-    elBet.textContent = `　下注 $${trimNum(bet())}`;
-    elWin.textContent = S.lastWin > 0 ? `贏 $${money(S.lastWin)}` : '';
-    elInfo.textContent = S.info;
+    const idle = S.state === "IDLE";
+    const A = S.auto;
+    const cash = v => "$" + money(v);
+
+    // 自動下注期間下注額鎖死，只剩速度能調
+    const canBet = idle && !A.on && BET_OPTIONS.length > 1;
+    elBetVal.textContent = "$" + trimNum(bet());
+    elBetDn.disabled = !canBet;
+    elBetUp.disabled = !canBet;
+
+    // 速度選單：收起來只看得到主鍵，展開才長出四個選項（往上長）
+    const si = SPEED_KEYS.indexOf(S.speed);
+    elSpeedBtn.textContent = "速度 " + SPEED_LABELS[si] + " " + (S.speedMenu ? "▾" : "▴");
+    elSpeedBtn.classList.toggle("on", S.speedMenu);
+    elSpeeds.style.display = S.speedMenu ? "flex" : "none";
+    [...elSpeeds.children].forEach((c, i) => c.classList.toggle("on", i === si));
+
+    elSpin.disabled = !(A.on || idle);
+    elSpin.textContent = A.on ? "停止" : idle ? "SPIN" : "飛行中";
+    elAuto.classList.toggle("on", A.panel || A.on);
+    elAuto.disabled = A.on;
+    elPanel.style.display = A.panel ? "block" : "none";
+
+    if (A.panel) {
+        [...elCounts.children].forEach((c, i) => {
+            c.classList.toggle("on", i === A.countIdx);
+            c.disabled = A.on;
+        });
+        elCustom.disabled = A.on;
+        elCustom.parentElement.classList.toggle("on", A.countIdx === CUSTOM_COUNT);
+        const mark = b => b ? "☑" : "☐";
+        elCondAnyWin.textContent = mark(A.stopAnyWin) + "  任何勝利就停";
+        elCondAnyWin.classList.toggle("on", A.stopAnyWin);
+        elCondAnyWin.disabled = A.on;
+        elAmounts.forEach(a => {
+            a.row.classList.toggle("on", A[a.key] > 0);
+            a.inp.disabled = A.on;
+        });
+        const r = autoRounds();
+        elAutoStart.textContent = A.on ? "停止自動"
+            : "開始自動" + (r < 0 ? "　∞" : r > 0 ? `　${r} 局` : "");
+        elAutoStart.classList.toggle("on", A.on);
+        // 選了自訂卻沒填數字 → 不讓他開始，免得按下去沒反應不知道為什麼
+        elAutoStart.disabled = !A.on && (S.balance < bet() || r === 0);
+    }
+
+    elBalance.textContent = "餘額 " + cash(S.balance);
+    elBet.textContent = "下注  $" + trimNum(bet());
+    elWin.textContent = S.lastWin > 0 ? "贏 " + cash(S.lastWin) : "";
+    elInfo.textContent = A.on
+        ? (A.left < 0 ? "自動 ∞　" : "自動 剩 " + A.left + " 局　") + S.info
+        : S.info;
 }
 
 // ── 啟動 ──────────────────────────────────────────────────

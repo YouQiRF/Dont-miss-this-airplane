@@ -222,7 +222,7 @@ node tools/genlayout.js --check    # 對帳：程式要找的節點名 vs 場景
 要換播放方式（例如接第三方音訊引擎),只要換掉 `AviaAudio` 的實作 ——
 表演層只認得 `AudioHooks` 這個 `play` / `loop` 介面,一行都不用動。
 
-> 單檔離線版（`AviaOffline.html`）沒有音效 —— 它是零相依的單一 HTML,沒有地方放音檔。
+> 單檔離線版（`Dont_miss_this_airplane.html`）沒有音效 —— 它是零相依的單一 HTML,沒有地方放音檔。
 
 ---
 

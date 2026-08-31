@@ -1,5 +1,5 @@
 /**
- * 產生單檔離線版：AviaOffline.html
+ * 產生單檔離線版：Dont_miss_this_airplane.html
  *
  *   node tools/genoffline.js
  *
@@ -17,7 +17,10 @@ const path = require('path');
 const { stripTypeScriptTypes } = require('node:module');
 
 const ROOT = path.resolve(__dirname, '..');
-const OUT = path.join(ROOT, 'AviaOffline.html');
+const OUT = path.join(ROOT, 'Dont_miss_this_airplane.html');
+// GitHub Pages 的入口。Pages 只認 index.html，所以同一份內容再寫一份到 docs/。
+// 兩份永遠同時產生，不會出現「線上版比較舊」的情況。
+const PAGES = path.join(ROOT, 'docs', 'index.html');
 
 // ── 1. 演算法：剝掉型別，拿掉 export（inline module 不能有 export）──
 const tsSrc = fs.readFileSync(path.join(ROOT, 'assets/scripts/AviaPath.ts'), 'utf8');
@@ -45,14 +48,19 @@ const html = `<!doctype html>
   #stage { position: relative; width: 100vw; height: 100vh;
     display: flex; align-items: center; justify-content: center; }
   canvas { display: block; border-radius: 6px; box-shadow: 0 8px 40px rgba(0,0,0,.55); }
-  #ui { position: absolute; inset: 0; pointer-events: none;
+  /* UI 一律用 1280x720 設計座標排版，再由 resize() 用同一個 scale 疊回畫布上。
+     不這樣做的話，畫布會縮、DOM 不會縮，兩層在小視窗下就對不齊。 */
+  #ui { position: absolute; left: 0; top: 0; pointer-events: none;
+    width: 1280px; height: 720px; transform-origin: 0 0;
     display: flex; flex-direction: column; justify-content: space-between;
-    padding: 18px 24px; max-width: 1280px; max-height: 720px;
-    margin: auto; color: #c4def4; }
+    padding: 18px 24px; color: #c4def4; }
   .row { display: flex; justify-content: space-between; align-items: flex-end; }
+  /* 上排只放右邊的「贏 $x」。左上角 32–90px 是畫布的距離／高度 HUD，不能佔。 */
   .row.top { align-items: flex-start; font-size: 15px; }
-  #bal { font-size: 20px; color: #eaf4ff; }
-  #betl { opacity: .75; }
+  /* 餘額／下注排在 HUD 底下，位置與 Cocos 版的 balance / betText 節點一致 */
+  #readout { position: absolute; left: 30px; top: 101px; line-height: 1; }
+  #bal { display: block; font-size: 24px; color: #eaf4ff; }
+  #betl { display: block; margin-top: 14px; font-size: 20px; opacity: .75; }
   #win { font-size: 22px; font-weight: 700; color: #ffca46; }
   /* 下注器：−  金額  ＋（金額本身不可點，只有兩顆鍵） */
   #stepper { display: flex; align-items: center; gap: 4px; pointer-events: auto;
@@ -147,6 +155,9 @@ ${render}
 `;
 
 fs.writeFileSync(OUT, html, 'utf8');
+fs.mkdirSync(path.dirname(PAGES), { recursive: true });
+fs.writeFileSync(PAGES, html, 'utf8');
 const kb = (Buffer.byteLength(html) / 1024).toFixed(0);
 console.log(`已產生  ${OUT}  (${kb} KB，單檔、零相依)`);
+console.log(`已產生  ${PAGES}  (GitHub Pages 入口，同一份內容)`);
 console.log('雙擊就能玩，不需要伺服器。');

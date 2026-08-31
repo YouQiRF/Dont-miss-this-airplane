@@ -77,6 +77,15 @@ function resize() {
     canvas.style.width = Math.round(DW * scale) + 'px';
     canvas.style.height = Math.round(DH * scale) + 'px';
     ctx.setTransform(scale * dpr, 0, 0, scale * dpr, 0, 0);
+
+    // DOM 的 UI 層用同一個 scale 疊回畫布上 —— 它是照 1280x720 排的，
+    // 縮放後每一顆按鈕都跟畫布上的東西維持固定關係，不會在小視窗下跑掉。
+    const ui = document.getElementById('ui');
+    if (ui) {
+        ui.style.left = Math.round((w - DW * scale) / 2) + 'px';
+        ui.style.top = Math.round((h - DH * scale) / 2) + 'px';
+        ui.style.transform = `scale(${scale})`;
+    }
 }
 window.addEventListener('resize', resize);
 
@@ -312,6 +321,9 @@ function drawTrail(scroll) {
     }
 }
 
+/** HUD 進度條的右緣（設計座標）。左緣由文字寬度決定，所以只固定右邊 */
+const HUD_BAR_RIGHT = 430;
+
 function drawHud(fr) {
     const s = S.script;
     const bar = (x, yUp, w, p, col) => {
@@ -322,14 +334,24 @@ function drawHud(fr) {
     };
     const dist = clamp(fr.x / Math.max(1, s.carrierX), 0, 1);
     const alt = clamp(fr.y / PHYS.ALT_DISPLAY_MAX, 0, 1);
-    bar(150, DH - 47, 210, dist, CFG.accent);
-    bar(150, DH - 81, 210, alt, CFG.hud);
 
     const u = CFG.metersPerPx, un = CFG.distanceUnit;
     ctx.font = '20px system-ui,sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
     ctx.fillStyle = CFG.hud;
-    ctx.fillText(`距離 ${fmtLen(fr.x * u)} / ${fmtLen(s.carrierX * u)} ${un}`, 36, up(DH - 42));
-    ctx.fillText(`高度 ${fmtLen(fr.y * u)} ${un}`, 36, up(DH - 76));
+    const sDist = `距離 ${fmtLen(fr.x * u)} / ${fmtLen(s.carrierX * u)} ${un}`;
+    const sAlt = `高度 ${fmtLen(fr.y * u)} ${un}`;
+    ctx.fillText(sDist, 36, up(DH - 42));
+    ctx.fillText(sAlt, 36, up(DH - 76));
+
+    // 進度條讓開文字 —— 距離讀數會長到「1,234 / 2,088 m」，寫死起點會被蓋住。
+    // 量的是「這一局最長會長成什麼樣」而不是當下的字，否則位數一跳條就左右抖。
+    // 飛行距離不會超過總長，所以拿總長填兩邊就是這一局的上界。
+    const worst = fmtLen(s.carrierX * u);
+    const barX = 36 + Math.max(
+        ctx.measureText(`距離 ${worst} / ${worst} ${un}`).width,
+        ctx.measureText(`高度 ${worst} ${un}`).width) + 16;
+    bar(barX, DH - 47, Math.max(60, HUD_BAR_RIGHT - barX), dist, CFG.accent);
+    bar(barX, DH - 81, Math.max(60, HUD_BAR_RIGHT - barX), alt, CFG.hud);
 
     ctx.font = 'bold 40px system-ui,sans-serif'; ctx.textAlign = 'center';
     ctx.fillStyle = S.targetBalance >= 20 ? CFG.accent : CFG.text;
@@ -658,9 +680,10 @@ function buildUi() {
     const ui = document.getElementById('ui');
     ui.innerHTML = `
       <div class="row top">
-        <div><b id="bal"></b><span id="betl"></span></div>
+        <div></div>
         <div id="win"></div>
       </div>
+      <div id="readout"><b id="bal"></b><span id="betl"></span></div>
       <div class="row bottom">
         <div id="stepper">
           <button id="betdn" class="step">−</button>
@@ -855,7 +878,7 @@ function syncUi() {
     }
 
     elBalance.textContent = "餘額 " + cash(S.balance);
-    elBet.textContent = "　下注 " + "$" + trimNum(bet());
+    elBet.textContent = "下注  $" + trimNum(bet());
     elWin.textContent = S.lastWin > 0 ? "贏 " + cash(S.lastWin) : "";
     elInfo.textContent = A.on
         ? (A.left < 0 ? "自動 ∞　" : "自動 剩 " + A.left + " 局　") + S.info
